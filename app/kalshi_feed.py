@@ -90,8 +90,8 @@ class KalshiFeed:
         async with websockets.connect(
             url,
             additional_headers=headers,
-            ping_interval=20,
-            ping_timeout=30,
+            ping_interval=None,  # Kalshi uses app-level keepalive; WS pings cause timeouts
+            open_timeout=30,
         ) as ws:
             self._ws = ws
             print(f"[KalshiFeed] Connected -> {url}")

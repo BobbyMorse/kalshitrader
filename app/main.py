@@ -178,6 +178,9 @@ def _snapshot() -> dict:
 async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
     """Called by KalshiFeed on every live price update."""
     _state["ticks_received"] += 1
+    # Broadcast tick count every 100 ticks so the dashboard counter stays live
+    if _state["ticks_received"] % 100 == 0:
+        asyncio.create_task(_broadcast({"bot_state": _snapshot()["bot_state"]}))
 
     # Update raw cache
     if ticker in _market_cache:
