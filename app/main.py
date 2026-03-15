@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -87,6 +88,9 @@ _state: Dict[str, Any] = {
     "feed": None,
     "ws_clients": set(),
 }
+
+_last_group_scan: Dict[str, float] = {}   # event_ticker → last scan timestamp
+_SCAN_THROTTLE_S = 1.0                     # max 1 scan per group per second
 
 _signals: List[ViolationSignal] = []
 _near_misses: List[ViolationSignal] = []          # positive edge, below trade threshold
@@ -202,6 +206,15 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                 tm.yes_ask < tm.yes_bid):
 
             event_ticker = tm.event_ticker
+            # Throttle: skip scan if this group was scanned within the last second
+            _now = time.monotonic()
+            if _now - _last_group_scan.get(event_ticker, 0.0) >= _SCAN_THROTTLE_S:
+                _last_group_scan[event_ticker] = _now
+            else:
+                tm = None  # skip scan but keep price update above
+
+        if tm is not None and not (tm.yes_ask <= 0 or tm.yes_bid <= 0):
+            event_ticker = tm.event_ticker
             group_tickers = _groups_ref.get(event_ticker, [])
             group_markets = [
                 _map_ref[t] for t in group_tickers
@@ -261,6 +274,13 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
         bm.yes_ask = ask_cents / 100.0
 
         event_ticker = bm.event_ticker
+        _now2 = time.monotonic()
+        if _now2 - _last_group_scan.get("B:" + event_ticker, 0.0) < _SCAN_THROTTLE_S:
+            bm = None  # throttled
+
+    if bm is not None:
+        event_ticker = bm.event_ticker
+        _last_group_scan["B:" + event_ticker] = time.monotonic()
         bucket_tickers = _bucket_groups.get(event_ticker, [])
         bucket_markets = [
             _bucket_map[t] for t in bucket_tickers
@@ -298,6 +318,9 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
         _trader.update_marks(_market_cache)
         _trader.update_marks_bucket(_market_cache)
         await _broadcast(_snapshot())
+
+    # Yield to event loop so health checks and other coroutines can run
+    await asyncio.sleep(0)
 
 
 # ── Full REST refresh ─────────────────────────────────────────────────────────
