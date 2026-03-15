@@ -560,8 +560,11 @@ async def startup() -> None:
 
     if ok:
         print("[main] Seeding market cache…")
+        _state["running"] = True
         await _refresh_markets()
         await _start_feed()
+        _state["scan_task"] = asyncio.create_task(_refresh_loop())
+        print("[main] Bot auto-started.")
     else:
         print("[main] Auth failed — real-time feed not started.")
 
