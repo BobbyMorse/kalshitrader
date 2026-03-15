@@ -39,6 +39,9 @@ _INT_THRESHOLD_SERIES = (
     "KXNBABLK",        # NBA blocks
     "KXNBAAST",        # NBA assists
     "KXEPLGOAL",       # EPL goals scored by player (1+, 2+)
+    "KXNHLGOAL",       # NHL player goals (1+, 2+, 3+)
+    "KXNHLPTS",        # NHL player points (1+, 2+, 3+)
+    "KXNHLAST",        # NHL player assists (1+, 2+, 3+)
 )
 
 # Series that use <TEAM><integer> suffix as threshold (e.g. NYK7 = NYK wins 1H by 7+)
@@ -268,8 +271,9 @@ def find_structural_anomalies(
     """
     anomalies: List[StructuralAnomaly] = []
     seen_middle: set = set()      # avoid surfacing the same odd market multiple times
+    per_group_count: Dict[str, int] = {}  # cap entries per event_ticker for diversity
     now = datetime.now(timezone.utc)
-    min_ttl = timedelta(minutes=15)
+    min_ttl = timedelta(minutes=30)  # skip groups expiring soon (reduces noise)
 
     for event_ticker, markets in groups.items():
         if len(markets) < 3:
@@ -292,11 +296,16 @@ def find_structural_anomalies(
                 if gross_edge < min_gross_edge:
                     continue
 
+                # Cap entries per group to prevent one series flooding the list
+                if per_group_count.get(event_ticker, 0) >= 2:
+                    continue
+
                 middle = sorted_markets[i + 1 : j]
                 middle_key = tuple(m.ticker for m in middle)
                 if middle_key in seen_middle:
                     continue
                 seen_middle.add(middle_key)
+                per_group_count[event_ticker] = per_group_count.get(event_ticker, 0) + 1
 
                 net_edge = gross_edge - fee_rate
                 entry_cost = lower.yes_ask + (1.0 - higher.yes_bid)
