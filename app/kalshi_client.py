@@ -104,7 +104,9 @@ class KalshiClient:
         # Priority: inline PEM content (env var) > file path
         pem_bytes: Optional[bytes] = None
         if self._private_key_content:
-            pem_bytes = self._private_key_content.encode()
+            # Fly.io / shell env vars sometimes store literal \n instead of real newlines
+            content = self._private_key_content.replace("\\n", "\n").replace("\r\n", "\n")
+            pem_bytes = content.encode()
         elif self.private_key_path:
             path = os.path.expanduser(self.private_key_path)
             if os.path.exists(path):
