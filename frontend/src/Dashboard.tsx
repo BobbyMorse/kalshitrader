@@ -830,6 +830,11 @@ export default function Dashboard() {
 
   // Fire notification on every new OPEN trade
   useEffect(() => {
+    // First snapshot: seed all existing trades as seen without notifying
+    if (seenTradeIds.current.size === 0) {
+      trades.forEach((t) => seenTradeIds.current.add(t.id));
+      return;
+    }
     const newOpens = trades.filter(
       (t) => t.action === "OPEN" && !seenTradeIds.current.has(t.id)
     );
@@ -840,10 +845,6 @@ export default function Dashboard() {
       if (activeTab !== "trades") {
         setUnseenTrades((n) => n + 1);
       }
-    }
-    // Also mark any pre-existing trades as seen on first load
-    if (newOpens.length === 0) {
-      trades.forEach((t) => seenTradeIds.current.add(t.id));
     }
   }, [trades]);
 
