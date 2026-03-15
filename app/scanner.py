@@ -380,10 +380,11 @@ def find_inverted_legs(
             if lower.ticker in seen:
                 continue
 
-            # Liquidity filter: bid must be at least 50% of ask and ≥ 10¢
-            # A bid=0 or bid<<ask means the market has no real buyers at the ask price —
-            # buying at the ask would immediately show a massive unrealized loss.
-            if lower.yes_bid < 0.10 or lower.yes_bid < lower.yes_ask * 0.5:
+            # Liquidity filter: bid ≥ 10¢ and spread (ask - bid) ≤ 40¢.
+            # Ratio-based checks are too aggressive — KXFED 3.25% at 50¢ ask with 20¢ bid
+            # (spread=30¢) is a real mispricing. KXCPI at 72¢ ask / 4¢ bid (spread=68¢) is not.
+            spread = lower.yes_ask - lower.yes_bid
+            if lower.yes_bid < 0.10 or spread > 0.40:
                 continue
 
             # Inversion: ask(lower) should be >= ask(higher); when inverted, lower is mispriced cheap
