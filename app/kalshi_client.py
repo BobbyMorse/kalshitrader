@@ -79,6 +79,7 @@ class KalshiClient:
         private_key_path: Optional[str] = None,
         email: Optional[str] = None,
         password: Optional[str] = None,
+        private_key_content: Optional[str] = None,  # PEM string (for Fly.io / env-var deployments)
     ):
         self.host = host.rstrip("/")
         self.api_prefix = api_prefix
@@ -86,6 +87,7 @@ class KalshiClient:
         self.private_key_path = private_key_path
         self.email = email
         self.password = password
+        self._private_key_content = private_key_content
 
         self._token: Optional[str] = None
         self._private_key = None
@@ -93,19 +95,28 @@ class KalshiClient:
 
         self.mock_mode = not (api_key_id or (email and password))
 
-        if api_key_id and private_key_path and _CRYPTO_AVAILABLE:
+        if api_key_id and _CRYPTO_AVAILABLE:
             self._load_private_key()
 
     # ── Internal ─────────────────────────────────────────────────────────────
 
     def _load_private_key(self) -> None:
-        path = os.path.expanduser(self.private_key_path or "")
-        if not os.path.exists(path):
-            print(f"[KalshiClient] private_key.pem not found at {path} – will try other auth")
+        # Priority: inline PEM content (env var) > file path
+        pem_bytes: Optional[bytes] = None
+        if self._private_key_content:
+            pem_bytes = self._private_key_content.encode()
+        elif self.private_key_path:
+            path = os.path.expanduser(self.private_key_path)
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    pem_bytes = f.read()
+            else:
+                print(f"[KalshiClient] private_key.pem not found at {path} – will try other auth")
+                return
+        else:
             return
         try:
-            with open(path, "rb") as f:
-                self._private_key = serialization.load_pem_private_key(f.read(), password=None)
+            self._private_key = serialization.load_pem_private_key(pem_bytes, password=None)
             self._auth_method = "rsa"
             print("[KalshiClient] RSA private key loaded")
         except Exception as exc:
