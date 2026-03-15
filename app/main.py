@@ -257,6 +257,30 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                                 _trader.execute(v, strategy="threshold_arb")
                     broadcast_needed = True
 
+                # ── Inverted-leg check on every tick (real-time mispricing detection) ──
+                inverted = find_inverted_legs(
+                    {event_ticker: group_markets},
+                    min_inversion=0.15,
+                    top_n=5,
+                )
+                if inverted:
+                    inv_index = {s.id: i for i, s in enumerate(_inverted_leg_signals)}
+                    for sig in inverted:
+                        if sig.id in inv_index:
+                            _inverted_leg_signals[inv_index[sig.id]] = sig
+                        else:
+                            _inverted_leg_signals.append(sig)
+                            print(
+                                f"[Feed] INVERT {sig.id}: "
+                                f"ask={sig.market.yes_ask:.2f} adj={sig.adj_higher.yes_ask:.2f} "
+                                f"inv={sig.inversion:.2f}"
+                            )
+                    if _config["auto_trade"] and _config["paper_trading"]:
+                        for sig in inverted:
+                            if not _trader.is_positioned(sig.id):
+                                _trader.execute_single_leg(sig)
+                    broadcast_needed = True
+
     # ── Bucket sum arb check ──────────────────────────────────────────────────
     bm = _bucket_map.get(ticker)
     if bm is not None:
