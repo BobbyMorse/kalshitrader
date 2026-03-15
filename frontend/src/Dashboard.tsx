@@ -101,6 +101,11 @@ function expiryIn(iso: string) {
   return `${m}m`;
 }
 
+function kalshiUrl(eventTicker: string): string {
+  const series = eventTicker.split("-")[0].toLowerCase();
+  return `https://kalshi.com/markets/${series}/events/${eventTicker.toLowerCase()}`;
+}
+
 function pnlColor(v: number) {
   if (v > 0) return "text-emerald-600";
   if (v < 0) return "text-rose-600";
@@ -166,6 +171,12 @@ function SignalRow({
           <span className="text-[10px] font-medium bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded-full">
             expires {expiryIn(sig.expiry)}
           </span>
+          {sig.event_ticker && (
+            <a href={kalshiUrl(sig.event_ticker)} target="_blank" rel="noopener noreferrer"
+               className="text-[10px] text-sky-500 hover:text-sky-700 flex items-center gap-0.5">
+              <ExternalLink className="h-3 w-3" />Kalshi
+            </a>
+          )}
         </div>
         <div className="mt-1 flex items-center gap-1 text-xs text-slate-500">
           <span className="font-mono">{fmtThreshold(sig.lower_threshold)}</span>
@@ -334,6 +345,12 @@ function StructuralAnomalyRow({ sig }: { sig: StructuralAnomaly }) {
             <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-medium">STRUCTURAL</span>
             <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">gap {sig.gap}</span>
             <span className="text-[10px] text-slate-400">expires {expiryIn(sig.expiry)}</span>
+            {sig.event_ticker && (
+              <a href={kalshiUrl(sig.event_ticker)} target="_blank" rel="noopener noreferrer"
+                 className="text-[10px] text-sky-500 hover:text-sky-700 flex items-center gap-0.5">
+                <ExternalLink className="h-3 w-3" />Kalshi
+              </a>
+            )}
           </div>
 
           {/* Bookend pair */}
@@ -396,6 +413,12 @@ function NearMissRow({ sig, threshold }: { sig: ViolationSignal; threshold: numb
           <span className="font-semibold text-slate-700">{sig.series}</span>
           <span className="text-[10px] bg-sky-100 text-sky-600 px-1.5 py-0.5 rounded-full">MONO</span>
           <span className="text-[10px] text-slate-400">expires {expiryIn(sig.expiry)}</span>
+          {sig.event_ticker && (
+            <a href={kalshiUrl(sig.event_ticker)} target="_blank" rel="noopener noreferrer"
+               className="text-[10px] text-sky-500 hover:text-sky-700 flex items-center gap-0.5">
+              <ExternalLink className="h-3 w-3" />Kalshi
+            </a>
+          )}
           <span className="text-[10px] text-slate-300">·</span>
           <span className="text-[10px] text-slate-400 font-mono">{new Date(sig.detected_at).toLocaleTimeString()}</span>
         </div>
@@ -480,6 +503,11 @@ function PositionRow({ pos }: { pos: Position }) {
           {pos.status === "one_leg_risk" && (
             <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
           )}
+          <a href={kalshiUrl(pos.lower_ticker.replace(/-T[\d.]+$/i, "").replace(/-\d+$/, ""))}
+             target="_blank" rel="noopener noreferrer"
+             className="text-[10px] text-sky-500 hover:text-sky-700 flex items-center gap-0.5">
+            <ExternalLink className="h-3 w-3" />Kalshi
+          </a>
         </div>
         <div className="mt-1 flex items-center gap-1 text-xs text-slate-500">
           <span className="font-mono">{fmtThreshold(pos.lower_threshold)}</span>

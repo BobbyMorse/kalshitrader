@@ -24,19 +24,27 @@ from models import BucketMarket, BucketSumSignal, StructuralAnomaly, ThresholdMa
 
 _T_RE = re.compile(r"-T([\d.]+)$", re.IGNORECASE)
 _B_RE = re.compile(r"-B([\d.]+)$", re.IGNORECASE)
-_N_RE = re.compile(r"-(\d+)$")  # integer suffix: KXNHLPTS-GAMEID-PLAYERID-3
+_N_RE = re.compile(r"-(\d+)$")            # dash + integer: KXNBASTL-GAMEID-PLAYER-1
+_TEAM_N_RE = re.compile(r"([A-Z]{2,5})(\d+)$")  # team+integer: KXNBA1HSPREAD-...-NYK7
 
 # Parlay/multi-variant market prefixes — their hex-suffixed tickers look like
 # bucket markets but are not. Exclude them from structural arb scanning.
 _PARLAY_PREFIXES = ("KXMVECROSSCATEGORY", "KXMVESPORTSMULTIGAMEEXTENDED", "KXMVE")
 
-# Series that use integer trailing suffixes as thresholds (e.g. 1, 2, 3+ steals/blocks)
+# Series that use -<integer> suffix as threshold (e.g. 1, 2, 3+ steals/blocks/goals)
 _INT_THRESHOLD_SERIES = (
-    "KXNBASTL",       # NBA steals
-    "KXNBA1HTOTAL",   # NBA 1st-half total points
+    "KXNBASTL",        # NBA steals
+    "KXNBA1HTOTAL",    # NBA 1st-half total points
     "KXNCAAMB1HTOTAL", # NCAA Men's Basketball 1H total
-    "KXNBABLK",       # NBA blocks
-    "KXNBAAST",       # NBA assists
+    "KXNBABLK",        # NBA blocks
+    "KXNBAAST",        # NBA assists
+    "KXEPLGOAL",       # EPL goals scored by player (1+, 2+)
+)
+
+# Series that use <TEAM><integer> suffix as threshold (e.g. NYK7 = NYK wins 1H by 7+)
+_TEAM_N_SERIES = (
+    "KXNBA1HSPREAD",    # NBA 1st-half point spread ladder
+    "KXNCAAMB1HSPREAD", # NCAA Men's Basketball 1H spread ladder
 )
 
 KALSHI_FEE_RATE = 0.07  # 7% of gross winnings per resolved contract
@@ -60,9 +68,12 @@ def _parse_expiry(market: dict) -> Optional[datetime]:
 
 def group_integer_threshold_markets(markets: List[dict]) -> Dict[str, List[ThresholdMarket]]:
     """
-    Filter and group sports/integer-suffix threshold markets (e.g. KXNHLPTS-...-1, -2, -3).
-    P(score >= 1) >= P(score >= 2) >= P(score >= 3) — same arb structure.
-    Only processes series in _INT_THRESHOLD_SERIES.
+    Filter and group sports threshold markets with two suffix formats:
+      1. Dash+integer: KXNBASTL-GAMEID-PLAYER-1, -2, -3  (series in _INT_THRESHOLD_SERIES)
+      2. Team+integer: KXNBA1HSPREAD-GAMEID-NYK7, NYK4    (series in _TEAM_N_SERIES)
+
+    P(X >= lower) >= P(X >= higher) monotonicity must hold — same arb structure as
+    financial threshold markets.
     """
     groups: Dict[str, List[ThresholdMarket]] = {}
     now = datetime.now(timezone.utc)
@@ -70,18 +81,30 @@ def group_integer_threshold_markets(markets: List[dict]) -> Dict[str, List[Thres
     for m in markets:
         ticker = m.get("ticker", "")
         series = ticker.split("-")[0].upper()
-        if not any(series == s for s in _INT_THRESHOLD_SERIES):
+
+        # Pattern 1: dash+integer suffix
+        if series in _INT_THRESHOLD_SERIES:
+            match = _N_RE.search(ticker)
+            if match is None:
+                continue
+            threshold = float(match.group(1))
+            event_ticker = ticker[: match.start()]
+
+        # Pattern 2: TEAM+integer suffix (e.g. NYK7 → team=NYK, threshold=7)
+        elif series in _TEAM_N_SERIES:
+            match = _TEAM_N_RE.search(ticker)
+            if match is None:
+                continue
+            threshold = float(match.group(2))
+            # event_ticker keeps the team prefix, strips only the numeric part
+            event_ticker = ticker[: len(ticker) - len(match.group(2))]
+
+        else:
             continue
-        match = _N_RE.search(ticker)
-        if match is None:
-            continue
-        threshold = float(match.group(1))
 
         expiry_dt = _parse_expiry(m)
         if expiry_dt is None or expiry_dt <= now:
             continue
-
-        event_ticker = ticker[: match.start()]
 
         yes_bid = float(m.get("yes_bid_dollars") or m.get("yes_bid") or 0)
         yes_ask = float(m.get("yes_ask_dollars") or m.get("yes_ask") or 0)

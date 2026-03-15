@@ -62,7 +62,7 @@ _config: Dict[str, Any] = {
     "min_gross_edge": 0.08,   # must exceed fee_rate (0.07) to guarantee net profit
     "max_size": 500,
     "fee_rate": 0.07,
-    "refresh_interval": 300,   # seconds between full REST refreshes
+    "refresh_interval": 60,    # seconds between full REST refreshes
     "auto_trade": True,
     "paper_trading": True,
 }
@@ -201,7 +201,7 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                 if t in _map_ref
                 and 0.01 <= _map_ref[t].yes_bid < 0.99
                 and 0.01 <= _map_ref[t].yes_ask < 0.99
-                and _map_ref[t].yes_ask - _map_ref[t].yes_bid <= 0.10  # wide spread = stale
+                and _map_ref[t].yes_ask - _map_ref[t].yes_bid <= 0.35  # wide spread = stale (sports markets have 16-18¢ spreads)
             ]
             if len(group_markets) >= 2:
                 violations = find_violations(

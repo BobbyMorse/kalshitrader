@@ -44,6 +44,7 @@ export interface ViolationSignal {
   entry_cost: number;       // ask(lower) + (1 - bid(higher))
   avail_size: number;
   detected_at: string;
+  event_ticker?: string;
 }
 
 export interface Position {
@@ -168,6 +169,7 @@ export interface StructuralAnomaly {
   avail_size: number;
   detected_at: string;
   gap: number;                            // index distance between lower and higher
+  event_ticker?: string;
   middle_markets: StructuralMiddleMarket[];
 }
 

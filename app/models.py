@@ -66,6 +66,7 @@ class ViolationSignal:
             "entry_cost": round(self.lower.yes_ask + (1.0 - self.higher.yes_bid), 4),
             "avail_size": self.avail_size,
             "detected_at": self.detected_at.isoformat(),
+            "event_ticker": self.lower.event_ticker,
         }
 
 
@@ -215,6 +216,7 @@ class StructuralAnomaly:
             "avail_size": self.avail_size,
             "detected_at": self.detected_at.isoformat(),
             "gap": len(self.middle_markets) + 1,
+            "event_ticker": self.lower.event_ticker,
             "middle_markets": [
                 {
                     "ticker": m.ticker,
