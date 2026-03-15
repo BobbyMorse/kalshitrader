@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from config import get_settings
@@ -616,8 +619,14 @@ async def _handle_ws_msg(msg: dict) -> None:
 # ── REST endpoints ────────────────────────────────────────────────────────────
 
 
+_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+_STATIC_INDEX = os.path.join(_STATIC_DIR, "index.html")
+
+
 @app.get("/")
-def root() -> dict:
+def root():
+    if os.path.isfile(_STATIC_INDEX):
+        return FileResponse(_STATIC_INDEX)
     return {"status": "ok", "service": "kalshi-arb-bot"}
 
 
@@ -742,3 +751,16 @@ async def update_config(cfg: ConfigUpdate) -> dict:
         _config["auto_trade"] = cfg.auto_trade
     await _broadcast({"type": "config_update", "config": _config})
     return _config
+
+
+# ── Static files (built React app) ────────────────────────────────────────────
+# Must be mounted AFTER all API routes so API paths take priority.
+
+if os.path.isdir(_STATIC_DIR):
+    _assets_dir = os.path.join(_STATIC_DIR, "assets")
+    if os.path.isdir(_assets_dir):
+        app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
+
+    @app.get("/{full_path:path}")
+    def spa_fallback(full_path: str):
+        return FileResponse(_STATIC_INDEX)

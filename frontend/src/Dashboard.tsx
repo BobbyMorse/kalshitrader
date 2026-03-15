@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+
+const API = (import.meta.env.VITE_API_URL as string | undefined) || window.location.origin;
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -148,7 +150,7 @@ function SignalRow({
     if (trading || isTraded) return;
     setTrading(true);
     try {
-      const res = await fetch("http://localhost:8003/bot/scan", { method: "POST" });
+      const res = await fetch(`${API}/bot/scan`, { method: "POST" });
       if (res.ok) onTrade(sig.id);
     } finally {
       setTrading(false);
@@ -310,7 +312,7 @@ function BucketSignalRow({
 
 // ── Structural anomaly row ────────────────────────────────────────────────────
 
-const API = (import.meta.env.VITE_API_URL as string | undefined) || `http://${window.location.hostname}:8003`;
+// API is defined at module level above
 
 function StructuralAnomalyRow({ sig }: { sig: StructuralAnomaly }) {
   const [trading, setTrading] = useState(false);
@@ -470,7 +472,7 @@ function PositionRow({ pos }: { pos: Position }) {
     if (!confirm(`Flatten position ${pos.id}?`)) return;
     setFlattening(true);
     try {
-      await fetch(`http://localhost:8003/positions/${pos.id}/flatten`, { method: "POST" });
+      await fetch(`${API}/positions/${pos.id}/flatten`, { method: "POST" });
     } finally {
       setFlattening(false);
     }
@@ -960,7 +962,7 @@ export default function Dashboard() {
                   className="rounded-2xl gap-1 text-rose-600 border-rose-200 hover:bg-rose-50"
                   onClick={async () => {
                     if (!confirm("Reset all paper P&L?")) return;
-                    await fetch("http://localhost:8003/bot/reset", { method: "POST" });
+                    await fetch(`${API}/bot/reset`, { method: "POST" });
                   }}
                   disabled={!connected}
                 >

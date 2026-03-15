@@ -14,7 +14,7 @@ import {
 
 const WS_URL =
   (import.meta.env.VITE_WS_URL as string | undefined) ||
-  `ws://${window.location.hostname}:8003/ws`;
+  `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
 
 export interface BotData {
   botState: BotState | null;
