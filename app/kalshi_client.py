@@ -107,6 +107,8 @@ class KalshiClient:
             # Fly.io / shell env vars sometimes store literal \n instead of real newlines
             content = self._private_key_content.replace("\\n", "\n").replace("\r\n", "\n")
             pem_bytes = content.encode()
+            print(f"[KalshiClient] PEM env var present, length={len(content)}, "
+                  f"starts_with_header={content.strip().startswith('-----BEGIN')}")
         elif self.private_key_path:
             path = os.path.expanduser(self.private_key_path)
             if os.path.exists(path):
