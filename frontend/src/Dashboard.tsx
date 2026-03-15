@@ -28,7 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { BotConfig, BucketPosition, BucketSignal, Position, StructuralAnomaly, TradeRecord, ViolationSignal } from "./types";
+import { BotConfig, BucketPosition, BucketSignal, InvertedLegSignal, Position, SingleLegPosition, StructuralAnomaly, TradeRecord, ViolationSignal } from "./types";
 
 // ── Trade notifications ───────────────────────────────────────────────────────
 
@@ -399,6 +399,46 @@ function StructuralAnomalyRow({ sig }: { sig: StructuralAnomaly }) {
   );
 }
 
+// ── Inverted-leg row ──────────────────────────────────────────────────────────
+
+function InvertedLegRow({ sig }: { sig: InvertedLegSignal }) {
+  return (
+    <div className="rounded-xl border border-orange-200 bg-white p-3 text-xs">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-semibold text-slate-700">{sig.series}</span>
+            <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">INVERT</span>
+            <span className="text-[10px] text-slate-400">expires {expiryIn(sig.expiry)}</span>
+            {sig.event_ticker && (
+              <a href={kalshiUrl(sig.event_ticker)} target="_blank" rel="noopener noreferrer"
+                 className="text-[10px] text-sky-500 hover:text-sky-700 flex items-center gap-0.5">
+                <ExternalLink className="h-3 w-3" />Kalshi
+              </a>
+            )}
+          </div>
+          {/* Cheap leg vs reference */}
+          <div className="mt-1 flex items-center gap-2 font-mono text-[10px]">
+            <span className="bg-red-50 border border-red-200 text-red-700 rounded px-1.5 py-0.5">
+              {sig.threshold} ask {fmtCents(sig.ask)}
+            </span>
+            <span className="text-slate-300">vs</span>
+            <span className="bg-slate-50 border border-slate-200 text-slate-600 rounded px-1.5 py-0.5">
+              {sig.adj_threshold} ask {fmtCents(sig.adj_ask)}
+            </span>
+          </div>
+          <div className="mt-0.5 text-[10px] text-orange-600 font-semibold">
+            Inversion: {fmtCents(sig.inversion)} · target bid: {fmtCents(sig.target_bid)}
+          </div>
+          <div className="mt-0.5 text-[10px] text-slate-400">
+            Auto-trade: buy {sig.ticker} YES at {fmtCents(sig.ask)}, exit ≥ {fmtCents(sig.target_bid)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Near-miss row ─────────────────────────────────────────────────────────────
 
 function NearMissRow({ sig, threshold }: { sig: ViolationSignal; threshold: number }) {
@@ -643,6 +683,77 @@ function BucketPositionRow({ pos }: { pos: BucketPosition }) {
   );
 }
 
+// ── Single-leg position row ───────────────────────────────────────────────────
+
+function SingleLegPositionRow({ pos }: { pos: SingleLegPosition }) {
+  const [flattening, setFlattening] = useState(false);
+  const isOpen = pos.status !== "closed";
+  const pnl = isOpen ? pos.unrealized_pnl : pos.realized_pnl;
+  const progress = pos.current_bid > 0
+    ? Math.min(100, Math.round(((pos.current_bid - pos.entry_price) / (pos.target_bid - pos.entry_price)) * 100))
+    : 0;
+
+  async function handleFlatten() {
+    if (flattening || !isOpen) return;
+    if (!confirm(`Flatten single-leg ${pos.id}?`)) return;
+    setFlattening(true);
+    try {
+      await fetch(`${API}/positions/${pos.id}/flatten`, { method: "POST" });
+    } finally {
+      setFlattening(false);
+    }
+  }
+
+  return (
+    <div className={`rounded-2xl border border-orange-200 p-4 text-sm ${isOpen ? "bg-orange-50/50" : "bg-slate-50 opacity-75"}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-mono text-xs text-slate-400">{pos.id}</span>
+            <span className="font-semibold text-slate-800">{pos.series}</span>
+            <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">INVERT</span>
+            <a href={kalshiUrl(pos.ticker.replace(/-T[\d.]+$/i, "").replace(/-\d+$/, ""))}
+               target="_blank" rel="noopener noreferrer"
+               className="text-[10px] text-sky-500 hover:text-sky-700 flex items-center gap-0.5">
+              <ExternalLink className="h-3 w-3" />Kalshi
+            </a>
+          </div>
+          <div className="mt-1 text-xs font-mono text-slate-600">
+            Long YES {pos.threshold} · {pos.size} cts · entry {fmtCents(pos.entry_price)} → target {fmtCents(pos.target_bid)}
+          </div>
+          <div className="text-[10px] text-slate-400">
+            expires {expiryIn(pos.expiry)} · entered {timeSince(pos.entry_time)}
+            {!isOpen && pos.exit_reason && ` · ${pos.exit_reason}`}
+          </div>
+          {isOpen && (
+            <div className="mt-1.5">
+              <div className="flex justify-between text-[10px] text-slate-400 mb-0.5">
+                <span>current bid {fmtCents(pos.current_bid)}</span>
+                <span>{progress}% to target</span>
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-orange-200">
+                <div className="h-1.5 rounded-full bg-orange-500 transition-all" style={{ width: `${Math.max(0, progress)}%` }} />
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          <div className={`font-mono text-lg font-semibold ${pnlColor(pnl)}`}>{fmtPnl(pnl)}</div>
+          {isOpen && (
+            <button
+              onClick={handleFlatten}
+              disabled={flattening}
+              className="rounded-xl px-3 py-1.5 text-xs font-semibold bg-orange-100 text-orange-700 hover:bg-orange-200 transition-colors"
+            >
+              {flattening ? "…" : "Flatten"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Trade row ─────────────────────────────────────────────────────────────────
 
 function TradeRow({ trade }: { trade: TradeRecord }) {
@@ -810,6 +921,7 @@ export default function Dashboard() {
     bucketNearMisses,
     structuralAnomalies,
     structuralNearMisses,
+    invertedLegs,
     positions,
     trades,
     pnlHistory,
@@ -854,18 +966,22 @@ export default function Dashboard() {
     if (activeTab === "trades") setUnseenTrades(0);
   }, [activeTab]);
 
-  // Separate threshold vs bucket positions
-  const thresholdPositions = positions.filter((p) => (p as any).type !== "bucket_sum") as Position[];
+  // Separate threshold vs bucket vs single-leg positions
+  const thresholdPositions = positions.filter((p) => (p as any).type !== "bucket_sum" && (p as any).strategy !== "mispriced_leg") as Position[];
   const bucketPositions = positions.filter((p) => (p as any).type === "bucket_sum") as BucketPosition[];
+  const singleLegPositions = positions.filter((p) => (p as any).strategy === "mispriced_leg") as SingleLegPosition[];
 
   const openPos = thresholdPositions.filter((p) => p.status !== "closed");
   const closedPos = thresholdPositions.filter((p) => p.status === "closed");
   const openBucketPos = bucketPositions.filter((p) => p.status !== "closed");
   const closedBucketPos = bucketPositions.filter((p) => p.status === "closed");
+  const openSinglePos = singleLegPositions.filter((p) => p.status !== "closed");
+  const closedSinglePos = singleLegPositions.filter((p) => p.status === "closed");
 
   const positionedIds = new Set([
     ...openPos.map((p) => p.signal_id),
     ...openBucketPos.map((p) => p.signal_id),
+    ...openSinglePos.map((p) => p.signal_id),
   ]);
 
   const activeSignals = signals.filter((s) => !positionedIds.has(s.id));
@@ -1222,6 +1338,29 @@ export default function Dashboard() {
                   </CardContent>
                 </Card>
               )}
+
+              {/* Inverted Legs — auto-traded single-leg mispricings */}
+              {invertedLegs.length > 0 && (
+                <Card className="rounded-3xl shadow-sm border-orange-100 bg-orange-50/30">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-orange-700">
+                      🎯 Inverted Legs
+                      <Badge className="rounded-full bg-orange-100 text-orange-700 text-xs">
+                        {invertedLegs.length}
+                      </Badge>
+                    </CardTitle>
+                    <p className="text-xs text-orange-600/70">
+                      Single markets priced <em>cheaper</em> than their adjacent higher threshold —
+                      clearly mispriced. Auto-traded: bot buys the cheap leg and exits when price normalizes.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-1.5">
+                    {invertedLegs.map((sig) => (
+                      <InvertedLegRow key={sig.id} sig={sig} />
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
             </div>
           </TabsContent>
 
@@ -1354,7 +1493,35 @@ export default function Dashboard() {
               </Card>
             )}
 
-            {openPos.length === 0 && closedPos.length === 0 && openBucketPos.length === 0 && closedBucketPos.length === 0 && (
+            {/* Open single-leg positions */}
+            {openSinglePos.length > 0 && (
+              <Card className="rounded-3xl shadow-sm border-orange-100">
+                <CardHeader>
+                  <CardTitle className="text-orange-700">Open Inverted-Leg Positions ({openSinglePos.length})</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {openSinglePos.map((p) => (
+                    <SingleLegPositionRow key={p.id} pos={p} />
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Closed single-leg positions */}
+            {closedSinglePos.length > 0 && (
+              <Card className="rounded-3xl shadow-sm border-orange-100">
+                <CardHeader>
+                  <CardTitle className="text-orange-700">Closed Inverted-Leg Positions ({closedSinglePos.length})</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {[...closedSinglePos].reverse().map((p) => (
+                    <SingleLegPositionRow key={p.id} pos={p} />
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {openPos.length === 0 && closedPos.length === 0 && openBucketPos.length === 0 && closedBucketPos.length === 0 && openSinglePos.length === 0 && (
               <div className="py-12 text-center text-sm text-slate-400">
                 No positions yet — start the bot to begin trading.
               </div>

@@ -27,11 +27,13 @@ from pydantic import BaseModel
 from config import get_settings
 from kalshi_client import KalshiClient
 from kalshi_feed import KalshiFeed
-from models import BucketMarket, BucketSumSignal, StructuralAnomaly, ThresholdMarket, ViolationSignal
+from models import (BucketMarket, BucketSumSignal, SingleLegSignal,
+                    StructuralAnomaly, ThresholdMarket, ViolationSignal)
 from paper_trader import PaperTrader
-from scanner import (find_bucket_violations, find_structural_anomalies,
-                     find_violations, group_bucket_markets,
-                     group_integer_threshold_markets, group_threshold_markets)
+from scanner import (find_bucket_violations, find_inverted_legs,
+                     find_structural_anomalies, find_violations,
+                     group_bucket_markets, group_integer_threshold_markets,
+                     group_threshold_markets)
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 
@@ -97,6 +99,7 @@ _near_misses: List[ViolationSignal] = []          # positive edge, below trade t
 _bucket_signals: List[BucketSumSignal] = []
 _bucket_near_misses: List[BucketSumSignal] = []   # positive edge, below trade threshold
 _structural_anomalies: List[StructuralAnomaly] = []        # non-adjacent violations (gross_edge > 0)
+_inverted_leg_signals: List[SingleLegSignal] = []          # single-leg price inversions (buy the cheap leg)
 _structural_near_misses: List[StructuralAnomaly] = []     # non-adjacent near-misses (closest to arb)
 _market_cache: Dict[str, dict] = {}               # ticker → raw market dict
 _threshold_map: Dict[str, ThresholdMarket] = {}      # ticker → ThresholdMarket
@@ -167,11 +170,14 @@ def _snapshot() -> dict:
         "bucket_near_misses": [s.to_dict() for s in _bucket_near_misses[:10]],
         "structural_anomalies": [s.to_dict() for s in _structural_anomalies[:20]],
         "structural_near_misses": [s.to_dict() for s in _structural_near_misses[:20]],
+        "inverted_legs": [s.to_dict() for s in _inverted_leg_signals],
         "positions": (
             [p.to_dict() for p in open_pos] +
             [p.to_dict() for p in closed_pos[-30:]] +
             [p.to_dict() for p in bucket_open] +
-            [p.to_dict() for p in bucket_closed[-10:]]
+            [p.to_dict() for p in bucket_closed[-10:]] +
+            [p.to_dict() for p in _trader.single_leg_open_positions] +
+            [p.to_dict() for p in _trader.single_leg_closed_positions[-10:]]
         ),
         "trades": [t.to_dict() for t in _trader.all_trades[-100:]],
         "pnl_history": _pnl_history[-200:],
@@ -297,6 +303,11 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                         if not _trader.is_positioned(v.id):
                             _trader.execute_bucket(v)
                 broadcast_needed = True
+
+    # Update single-leg marks on every tick for the relevant ticker
+    single_closed = _trader.update_single_leg_marks(_threshold_map, _int_threshold_map)
+    if single_closed:
+        broadcast_needed = True
 
     if broadcast_needed:
         _trader.update_marks(_market_cache)
@@ -487,7 +498,7 @@ async def _refresh_markets() -> None:
             all_groups,
             max_size=_config["max_size"],
             fee_rate=_fee,
-            min_gross_edge=0.0,   # genuine violations only
+            min_gross_edge=0.001,  # genuine violations only (exclude exact 0¢ edge)
         )
         _near_miss_floor_structural = -(_fee + 0.08)  # within ~15¢ of being a true arb
         structural_near = find_structural_anomalies(
@@ -503,6 +514,22 @@ async def _refresh_markets() -> None:
         _structural_near_misses.extend(
             [s for s in structural_near if s.gross_edge < 0.0][:20]
         )
+
+        # Inverted-leg scan: find clearly mispriced single markets
+        inverted = find_inverted_legs(all_groups, min_inversion=0.15, top_n=20)
+        _inverted_leg_signals.clear()
+        _inverted_leg_signals.extend(inverted)
+
+        if inverted:
+            print(f"[Refresh] {len(inverted)} inverted leg(s) detected")
+            for sig in inverted[:3]:
+                print(f"  [INVERT] {sig.id}: ask={sig.market.yes_ask:.2f} "
+                      f"adj_ask={sig.adj_higher.yes_ask:.2f} inv={sig.inversion:.2f}")
+
+        if _config["auto_trade"] and _config["paper_trading"]:
+            for sig in inverted:
+                if not _trader.is_positioned(sig.id):
+                    _trader.execute_single_leg(sig)
 
         print(
             f"[Refresh] {_state['markets_fetched']} markets | "
@@ -747,7 +774,10 @@ async def trade_structural(signal_id: str) -> dict:
 
 @app.post("/positions/{pos_id}/flatten")
 async def flatten_position(pos_id: str) -> dict:
+    # Try threshold/structural arb first, then single-leg
     pos = _trader.flatten(pos_id, _market_cache)
+    if pos is None:
+        pos = _trader.flatten_single_leg(pos_id)
     if pos is None:
         raise HTTPException(status_code=404, detail="Position not found or already closed")
     await _broadcast(_snapshot())

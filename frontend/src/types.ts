@@ -173,6 +173,44 @@ export interface StructuralAnomaly {
   middle_markets: StructuralMiddleMarket[];
 }
 
+export interface InvertedLegSignal {
+  id: string;               // = ticker of the cheap market
+  series: string;
+  expiry: string;
+  ticker: string;
+  threshold: number;
+  adj_ticker: string;
+  adj_threshold: number;
+  ask: number;              // current ask of cheap market (0-1)
+  adj_ask: number;          // adjacent higher's ask (0-1) — fair-value reference
+  inversion: number;        // adj_ask - ask (how mispriced)
+  target_bid: number;       // auto-exit when bid reaches this
+  detected_at: string;
+  event_ticker?: string;
+}
+
+export interface SingleLegPosition {
+  id: string;
+  signal_id: string;
+  series: string;
+  expiry: string;
+  ticker: string;
+  threshold: number;
+  adj_ticker: string;
+  size: number;
+  entry_price: number;
+  target_bid: number;
+  entry_time: string;
+  status: string;           // "open" | "closed"
+  strategy: string;         // "mispriced_leg"
+  current_bid: number;
+  unrealized_pnl: number;
+  realized_pnl: number;
+  exit_price: number;
+  exit_time: string | null;
+  exit_reason: string;
+}
+
 export interface WsMessage {
   type: string;
   bot_state?: BotState;
@@ -183,7 +221,8 @@ export interface WsMessage {
   bucket_near_misses?: BucketSignal[];
   structural_anomalies?: StructuralAnomaly[];
   structural_near_misses?: StructuralAnomaly[];
-  positions?: (Position | BucketPosition)[];
+  inverted_legs?: InvertedLegSignal[];
+  positions?: (Position | BucketPosition | SingleLegPosition)[];
   trades?: TradeRecord[];
   pnl_history?: PnlPoint[];
   running?: boolean;

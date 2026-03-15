@@ -20,7 +20,8 @@ from typing import Dict, List, Optional
 
 import uuid
 
-from models import BucketMarket, BucketSumSignal, StructuralAnomaly, ThresholdMarket, ViolationSignal
+from models import (BucketMarket, BucketSumSignal, SingleLegSignal,
+                    StructuralAnomaly, ThresholdMarket, ViolationSignal)
 
 _T_RE = re.compile(r"-T([\d.]+)$", re.IGNORECASE)
 _B_RE = re.compile(r"-B([\d.]+)$", re.IGNORECASE)
@@ -333,6 +334,70 @@ def find_structural_anomalies(
 
     anomalies.sort(key=lambda a: a.gross_edge, reverse=True)
     return anomalies[:top_n]
+
+
+# ── Inverted-leg mispricing ───────────────────────────────────────────────────
+
+
+def find_inverted_legs(
+    groups: Dict[str, List[ThresholdMarket]],
+    min_inversion: float = 0.15,
+    top_n: int = 20,
+) -> List[SingleLegSignal]:
+    """
+    Detect markets where ask(lower_threshold) is significantly cheaper than
+    ask(adjacent_higher_threshold) — the ladder is price-inverted.
+
+    Normally ask(lower) >= ask(higher) because lower threshold = more likely.
+    When ask(lower) << ask(higher), the lower market is mispriced cheap.
+    The correct trade: buy YES on the cheap market (single leg, directional).
+    Auto-exit when the bid reaches near the adjacent reference price (target_bid).
+
+    min_inversion: how many dollars cheaper the lower must be (default 15¢).
+    """
+    signals: List[SingleLegSignal] = []
+    seen: set = set()
+    now = datetime.now(timezone.utc)
+    min_ttl = timedelta(minutes=30)
+
+    for event_ticker, markets in groups.items():
+        if len(markets) < 2:
+            continue
+        sorted_markets = sorted(markets, key=lambda x: x.threshold)
+        if sorted_markets[0].expiry_dt - now < min_ttl:
+            continue
+
+        for i in range(len(sorted_markets) - 1):
+            lower = sorted_markets[i]
+            higher = sorted_markets[i + 1]
+
+            if lower.yes_ask <= 0 or higher.yes_ask <= 0:
+                continue
+            if lower.ticker in seen:
+                continue
+
+            # Inversion: ask(lower) should be >= ask(higher); when inverted, lower is mispriced cheap
+            inversion = higher.yes_ask - lower.yes_ask  # positive = lower is cheaper = inverted
+            if inversion < min_inversion:
+                continue
+
+            seen.add(lower.ticker)
+            # Target: exit when lower's bid climbs to near the adjacent higher's current ask
+            target_bid = round(higher.yes_ask - 0.05, 4)
+
+            signals.append(SingleLegSignal(
+                id=lower.ticker,
+                series=lower.series,
+                expiry_dt=lower.expiry_dt,
+                market=lower,
+                adj_higher=higher,
+                inversion=inversion,
+                target_bid=target_bid,
+                detected_at=now,
+            ))
+
+    signals.sort(key=lambda s: s.inversion, reverse=True)
+    return signals[:top_n]
 
 
 # ── Bucket sum arb ────────────────────────────────────────────────────────────

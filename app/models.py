@@ -230,6 +230,91 @@ class StructuralAnomaly:
 
 
 @dataclass
+class SingleLegSignal:
+    """
+    A single mispriced market: ask(lower_threshold) << ask(adjacent_higher_threshold).
+    Normally lower threshold is MORE likely → MORE expensive. When inverted, the cheaper
+    leg is mispriced and should be bought outright (not hedged).
+
+    Trade: buy YES on `market` at market.yes_ask.
+    Exit:  when market.yes_bid >= target_bid (price normalized to fair value).
+    """
+    id: str                         # = market.ticker
+    series: str
+    expiry_dt: datetime
+    market: ThresholdMarket         # the cheap mispriced market (lower threshold)
+    adj_higher: ThresholdMarket     # adjacent higher threshold (reference for fair value)
+    inversion: float                # adj_higher.yes_ask - market.yes_ask (>0 when inverted)
+    target_bid: float               # auto-exit when market.yes_bid reaches this
+    detected_at: datetime
+
+    def to_dict(self) -> dict:
+        live_inv = round(self.adj_higher.yes_ask - self.market.yes_ask, 4)
+        return {
+            "id": self.id,
+            "series": self.series,
+            "expiry": self.expiry_dt.isoformat(),
+            "ticker": self.market.ticker,
+            "threshold": self.market.threshold,
+            "adj_ticker": self.adj_higher.ticker,
+            "adj_threshold": self.adj_higher.threshold,
+            "ask": round(self.market.yes_ask, 4),
+            "adj_ask": round(self.adj_higher.yes_ask, 4),
+            "inversion": live_inv,
+            "target_bid": round(self.target_bid, 4),
+            "detected_at": self.detected_at.isoformat(),
+            "event_ticker": self.market.event_ticker,
+        }
+
+
+@dataclass
+class SingleLegPosition:
+    """Paper position: long YES on a single mispriced market."""
+    id: str
+    signal_id: str          # = market ticker
+    series: str
+    expiry_dt: datetime
+    ticker: str
+    threshold: float
+    adj_ticker: str         # adjacent reference market
+    size: int
+    entry_price: float      # yes_ask at entry (0-1)
+    target_bid: float       # auto-exit when bid reaches this
+    entry_time: datetime
+    status: str = "open"    # "open" | "closed"
+    strategy: str = "mispriced_leg"
+    current_bid: float = 0.0
+    unrealized_pnl: float = 0.0
+    realized_pnl: float = 0.0
+    exit_price: float = 0.0
+    exit_time: Optional[datetime] = None
+    exit_reason: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "signal_id": self.signal_id,
+            "series": self.series,
+            "expiry": self.expiry_dt.isoformat(),
+            "ticker": self.ticker,
+            "threshold": self.threshold,
+            "adj_ticker": self.adj_ticker,
+            "size": self.size,
+            "entry_price": round(self.entry_price, 4),
+            "target_bid": round(self.target_bid, 4),
+            "entry_time": self.entry_time.isoformat(),
+            "status": self.status,
+            "strategy": self.strategy,
+            "current_bid": round(self.current_bid, 4),
+            "unrealized_pnl": round(self.unrealized_pnl, 4),
+            "realized_pnl": round(self.realized_pnl, 4),
+            "exit_price": round(self.exit_price, 4),
+            "exit_time": self.exit_time.isoformat() if self.exit_time else None,
+            "exit_reason": self.exit_reason,
+        }
+
+
+@dataclass
 class BucketMarket:
     """A single bucket YES market (e.g. KXBTCD closes in [82500, 83000))."""
     ticker: str

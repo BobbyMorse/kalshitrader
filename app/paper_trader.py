@@ -37,7 +37,8 @@ def _mkt_ask(m: dict) -> float:
     ya_d = m.get("yes_ask_dollars")
     return float(ya_d) if ya_d is not None else 0.0
 
-from models import BucketPosition, BucketSumSignal, Position, TradeRecord, ViolationSignal
+from models import (BucketPosition, BucketSumSignal, Position, SingleLegPosition,
+                    SingleLegSignal, TradeRecord, ViolationSignal)
 
 
 # ── Persistence helpers ───────────────────────────────────────────────────────
@@ -87,6 +88,22 @@ def _load_bucket_position(d: dict) -> BucketPosition:
     )
 
 
+def _load_single_leg_position(d: dict) -> SingleLegPosition:
+    return SingleLegPosition(
+        id=d["id"], signal_id=d["signal_id"], series=d["series"],
+        expiry_dt=datetime.fromisoformat(d["expiry_dt"]),
+        ticker=d["ticker"], threshold=d["threshold"], adj_ticker=d["adj_ticker"],
+        size=d["size"], entry_price=d["entry_price"], target_bid=d["target_bid"],
+        entry_time=datetime.fromisoformat(d["entry_time"]),
+        status=d.get("status", "open"), strategy=d.get("strategy", "mispriced_leg"),
+        current_bid=d.get("current_bid", 0.0),
+        unrealized_pnl=d.get("unrealized_pnl", 0.0),
+        realized_pnl=d.get("realized_pnl", 0.0),
+        exit_price=d.get("exit_price", 0.0),
+        exit_time=_dt(d.get("exit_time")), exit_reason=d.get("exit_reason", ""),
+    )
+
+
 def _load_trade(d: dict) -> TradeRecord:
     return TradeRecord(
         id=d["id"], position_id=d["position_id"],
@@ -119,6 +136,11 @@ class PaperTrader:
         self._bucket_closed: List[BucketPosition] = []
         self._bucket_positioned: Dict[str, str] = {}   # signal_id → pos_id
 
+        # Single-leg mispriced market positions
+        self._single_open: Dict[str, SingleLegPosition] = {}   # pos_id → pos
+        self._single_closed: List[SingleLegPosition] = []
+        self._single_positioned: Dict[str, str] = {}           # signal_id (ticker) → pos_id
+
     # ── Read-only properties ──────────────────────────────────────────────────
 
     @property
@@ -136,15 +158,26 @@ class PaperTrader:
     @property
     def realized_pnl(self) -> float:
         return (sum(p.realized_pnl for p in self._closed) +
-                sum(p.realized_pnl for p in self._bucket_closed))
+                sum(p.realized_pnl for p in self._bucket_closed) +
+                sum(p.realized_pnl for p in self._single_closed))
 
     @property
     def unrealized_pnl(self) -> float:
         # For threshold/structural arb: locked expiry P&L = net_edge × size (fees included, worst-case)
         # For bucket arb: mid-based is meaningful (exhaustive set, one pays $1)
+        # For single-leg: mark-to-bid (directional)
         threshold_locked = sum(p.net_edge * p.size for p in self._open.values())
         bucket_mid = sum(p.unrealized_pnl for p in self._bucket_open.values())
-        return threshold_locked + bucket_mid
+        single_mid = sum(p.unrealized_pnl for p in self._single_open.values())
+        return threshold_locked + bucket_mid + single_mid
+
+    @property
+    def single_leg_open_positions(self) -> List[SingleLegPosition]:
+        return list(self._single_open.values())
+
+    @property
+    def single_leg_closed_positions(self) -> List[SingleLegPosition]:
+        return self._single_closed
 
     @property
     def bucket_open_positions(self) -> List[BucketPosition]:
@@ -155,7 +188,9 @@ class PaperTrader:
         return self._bucket_closed
 
     def is_positioned(self, signal_id: str) -> bool:
-        return signal_id in self._positioned or signal_id in self._bucket_positioned
+        return (signal_id in self._positioned or
+                signal_id in self._bucket_positioned or
+                signal_id in self._single_positioned)
 
     # ── Entry ─────────────────────────────────────────────────────────────────
 
@@ -452,6 +487,119 @@ class PaperTrader:
         self.save()
         return pos
 
+    # ── Single-leg mispriced market ───────────────────────────────────────────
+
+    def execute_single_leg(self, sig: SingleLegSignal) -> Optional[SingleLegPosition]:
+        """Buy YES on the single mispriced market at current ask."""
+        if sig.id in self._single_positioned:
+            return None
+        size = min(sig.market.open_interest if sig.market.open_interest > 0 else self.max_size,
+                   self.max_size)
+        if size <= 0:
+            return None
+
+        pos_id = str(uuid.uuid4())[:8]
+        now = datetime.now(timezone.utc)
+
+        pos = SingleLegPosition(
+            id=pos_id,
+            signal_id=sig.id,
+            series=sig.series,
+            expiry_dt=sig.expiry_dt,
+            ticker=sig.market.ticker,
+            threshold=sig.market.threshold,
+            adj_ticker=sig.adj_higher.ticker,
+            size=size,
+            entry_price=sig.market.yes_ask,
+            target_bid=sig.target_bid,
+            entry_time=now,
+            current_bid=sig.market.yes_bid,
+        )
+        pos.unrealized_pnl = (pos.current_bid - pos.entry_price) * size
+
+        self._single_open[pos_id] = pos
+        self._single_positioned[sig.id] = pos_id
+
+        print(
+            f"[PaperTrader] OPEN SINGLE-LEG {pos_id}: "
+            f"{sig.market.ticker} YES@{sig.market.yes_ask:.2f} "
+            f"inversion={sig.inversion:.2f} target={sig.target_bid:.2f} size={size}"
+        )
+        self.save()
+        return pos
+
+    def update_single_leg_marks(self, threshold_map: Dict, int_threshold_map: Dict) -> List[str]:
+        """
+        Refresh P&L for open single-leg positions; auto-close when target hit or expired.
+        Returns list of auto-closed position IDs.
+        """
+        auto_closed = []
+        now = datetime.now(timezone.utc)
+
+        for pos in list(self._single_open.values()):
+            tm = threshold_map.get(pos.ticker) or int_threshold_map.get(pos.ticker)
+            if tm is not None:
+                pos.current_bid = tm.yes_bid
+            pos.unrealized_pnl = round((pos.current_bid - pos.entry_price) * pos.size, 4)
+
+            # Auto-exit: price normalized to near fair value
+            if pos.current_bid >= pos.target_bid:
+                gain = pos.current_bid - pos.entry_price
+                fee = self.fee_rate * gain if gain > 0 else 0.0
+                pos.realized_pnl = round((gain - fee) * pos.size, 4)
+                pos.exit_price = pos.current_bid
+                pos.exit_time = now
+                pos.exit_reason = "target_hit"
+                pos.status = "closed"
+                pos.unrealized_pnl = 0.0
+                self._single_open.pop(pos.id)
+                self._single_closed.append(pos)
+                self._single_positioned.pop(pos.signal_id, None)
+                auto_closed.append(pos.id)
+                print(f"[PaperTrader] AUTO-CLOSE SINGLE-LEG {pos.id}: "
+                      f"bid={pos.current_bid:.2f} PnL=${pos.realized_pnl:.2f}")
+                continue
+
+            # Expire
+            if pos.expiry_dt <= now:
+                gain = pos.current_bid - pos.entry_price
+                fee = self.fee_rate * gain if gain > 0 else 0.0
+                pos.realized_pnl = round((gain - fee) * pos.size, 4)
+                pos.exit_price = pos.current_bid
+                pos.exit_time = now
+                pos.exit_reason = "expired"
+                pos.status = "closed"
+                pos.unrealized_pnl = 0.0
+                self._single_open.pop(pos.id)
+                self._single_closed.append(pos)
+                self._single_positioned.pop(pos.signal_id, None)
+                auto_closed.append(pos.id)
+                print(f"[PaperTrader] EXPIRE SINGLE-LEG {pos.id}: PnL=${pos.realized_pnl:.2f}")
+
+        if auto_closed:
+            self.save()
+        return auto_closed
+
+    def flatten_single_leg(self, pos_id: str) -> Optional[SingleLegPosition]:
+        """Manually close a single-leg position at current bid."""
+        pos = self._single_open.get(pos_id)
+        if pos is None:
+            return None
+        gain = pos.current_bid - pos.entry_price
+        fee = self.fee_rate * gain if gain > 0 else 0.0
+        pos.realized_pnl = round((gain - fee) * pos.size, 4)
+        pos.exit_price = pos.current_bid
+        pos.exit_time = datetime.now(timezone.utc)
+        pos.exit_reason = "flattened"
+        pos.status = "closed"
+        pos.unrealized_pnl = 0.0
+        self._single_open.pop(pos_id)
+        self._single_closed.append(pos)
+        self._single_positioned.pop(pos.signal_id, None)
+        print(f"[PaperTrader] FLATTEN SINGLE-LEG {pos.id}: PnL=${pos.realized_pnl:.2f}")
+        self.save()
+        return pos
+
     # ── Bucket MTM + settlement ────────────────────────────────────────────────
 
     def update_marks_bucket(self, market_map: Dict[str, dict]) -> None:
@@ -535,6 +683,9 @@ class PaperTrader:
             "bucket_open": {k: dataclasses.asdict(v) for k, v in self._bucket_open.items()},
             "bucket_closed": [dataclasses.asdict(v) for v in self._bucket_closed],
             "bucket_positioned": dict(self._bucket_positioned),
+            "single_open": {k: dataclasses.asdict(v) for k, v in self._single_open.items()},
+            "single_closed": [dataclasses.asdict(v) for v in self._single_closed],
+            "single_positioned": dict(self._single_positioned),
         }
         tmp = path + ".tmp"
         with open(tmp, "w") as f:
@@ -560,10 +711,15 @@ class PaperTrader:
             for v in state.get("bucket_closed", []):
                 self._bucket_closed.append(_load_bucket_position(v))
             self._bucket_positioned.update(state.get("bucket_positioned", {}))
+            for k, v in state.get("single_open", {}).items():
+                self._single_open[k] = _load_single_leg_position(v)
+            for v in state.get("single_closed", []):
+                self._single_closed.append(_load_single_leg_position(v))
+            self._single_positioned.update(state.get("single_positioned", {}))
             print(
                 f"[PaperTrader] Loaded state: {len(self._open)} open, "
                 f"{len(self._closed)} closed, {len(self._trades)} trades, "
-                f"{len(self._bucket_open)} bucket_open"
+                f"{len(self._bucket_open)} bucket_open, {len(self._single_open)} single_open"
             )
         except Exception as e:
             print(f"[PaperTrader] Failed to load state from {path}: {e}")
@@ -577,5 +733,8 @@ class PaperTrader:
         self._positioned.clear()
         self._bucket_open.clear()
         self._bucket_closed.clear()
+        self._single_open.clear()
+        self._single_closed.clear()
+        self._single_positioned.clear()
         self._bucket_positioned.clear()
         self.save()
