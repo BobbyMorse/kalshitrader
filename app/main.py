@@ -51,7 +51,7 @@ _client = KalshiClient(
     api_prefix=settings.kalshi_api_prefix,
     api_key_id=settings.kalshi_api_key_id,
     private_key_path=settings.kalshi_private_key_path,
-    private_key_content=settings.kalshi_private_key_content,
+    private_key_content=settings.kalshi_private_key,
     email=settings.kalshi_email,
     password=settings.kalshi_password,
 )

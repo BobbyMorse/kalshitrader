@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # Kalshi API
     kalshi_api_key_id: Optional[str] = None
     kalshi_private_key_path: str = "./private_key.pem"
-    kalshi_private_key_content: Optional[str] = None  # PEM string for cloud deployments
+    kalshi_private_key: Optional[str] = None  # PEM string for cloud deployments (KALSHI_PRIVATE_KEY env var)
     kalshi_email: Optional[str] = None
     kalshi_password: Optional[str] = None
     kalshi_demo: bool = True
