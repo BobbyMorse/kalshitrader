@@ -490,7 +490,7 @@ async def _refresh_markets() -> None:
         _structural_anomalies.extend(structural)
 
         print(
-            f"[Refresh] {len(markets)} markets | "
+            f"[Refresh] {_state['markets_fetched']} markets | "
             f"{len(groups)} T-groups / {len(int_groups)} INT-groups / {len(bucket_groups)} B-groups | "
             f"{len(violations)} T-violations / {len(b_violations)} B-violations | "
             f"{len(near_misses)} T-near / {len(b_near_misses)} B-near | "
