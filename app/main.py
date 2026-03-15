@@ -66,7 +66,7 @@ _config: Dict[str, Any] = {
     "min_gross_edge": 0.08,   # must exceed fee_rate (0.07) to guarantee net profit
     "max_size": 500,
     "fee_rate": 0.07,
-    "refresh_interval": 60,    # seconds between full REST refreshes
+    "refresh_interval": 300,   # seconds between full REST refreshes
     "auto_trade": True,
     "paper_trading": True,
 }
@@ -178,9 +178,9 @@ def _snapshot() -> dict:
 async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
     """Called by KalshiFeed on every live price update."""
     _state["ticks_received"] += 1
-    # Broadcast tick count every 100 ticks so the dashboard counter stays live
-    if _state["ticks_received"] % 100 == 0:
-        asyncio.create_task(_broadcast({"bot_state": _snapshot()["bot_state"]}))
+    # Broadcast tick count every 500 ticks (lightweight partial update)
+    if _state["ticks_received"] % 500 == 0:
+        asyncio.create_task(_broadcast({"bot_state": {"ticks_received": _state["ticks_received"]}}))
 
     # Update raw cache
     if ticker in _market_cache:
