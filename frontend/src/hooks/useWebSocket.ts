@@ -24,6 +24,7 @@ export interface BotData {
   bucketSignals: BucketSignal[];
   bucketNearMisses: BucketSignal[];
   structuralAnomalies: StructuralAnomaly[];
+  structuralNearMisses: StructuralAnomaly[];
   positions: (Position | BucketPosition)[];
   trades: TradeRecord[];
   pnlHistory: PnlPoint[];
@@ -52,6 +53,7 @@ export function useWebSocket(): BotData & BotControls {
   const [bucketSignals, setBucketSignals] = useState<BucketSignal[]>([]);
   const [bucketNearMisses, setBucketNearMisses] = useState<BucketSignal[]>([]);
   const [structuralAnomalies, setStructuralAnomalies] = useState<StructuralAnomaly[]>([]);
+  const [structuralNearMisses, setStructuralNearMisses] = useState<StructuralAnomaly[]>([]);
   const [positions, setPositions] = useState<(Position | BucketPosition)[]>([]);
   const [trades, setTrades] = useState<TradeRecord[]>([]);
   const [pnlHistory, setPnlHistory] = useState<PnlPoint[]>([]);
@@ -85,6 +87,7 @@ export function useWebSocket(): BotData & BotControls {
         if (msg.bucket_signals) setBucketSignals(msg.bucket_signals);
         if (msg.bucket_near_misses) setBucketNearMisses(msg.bucket_near_misses);
         if (msg.structural_anomalies) setStructuralAnomalies(msg.structural_anomalies);
+        if (msg.structural_near_misses) setStructuralNearMisses(msg.structural_near_misses);
         if (msg.positions) setPositions(msg.positions);
         if (msg.trades) setTrades(msg.trades);
         if (msg.pnl_history) setPnlHistory(msg.pnl_history);
@@ -134,6 +137,7 @@ export function useWebSocket(): BotData & BotControls {
     bucketSignals,
     bucketNearMisses,
     structuralAnomalies,
+    structuralNearMisses,
     positions,
     trades,
     pnlHistory,

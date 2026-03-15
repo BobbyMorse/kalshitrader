@@ -96,7 +96,8 @@ _signals: List[ViolationSignal] = []
 _near_misses: List[ViolationSignal] = []          # positive edge, below trade threshold
 _bucket_signals: List[BucketSumSignal] = []
 _bucket_near_misses: List[BucketSumSignal] = []   # positive edge, below trade threshold
-_structural_anomalies: List[StructuralAnomaly] = []  # non-adjacent violations for manual review
+_structural_anomalies: List[StructuralAnomaly] = []        # non-adjacent violations (gross_edge > 0)
+_structural_near_misses: List[StructuralAnomaly] = []     # non-adjacent near-misses (closest to arb)
 _market_cache: Dict[str, dict] = {}               # ticker → raw market dict
 _threshold_map: Dict[str, ThresholdMarket] = {}      # ticker → ThresholdMarket
 _threshold_groups: Dict[str, List[str]] = {}         # event_ticker → [tickers]
@@ -165,6 +166,7 @@ def _snapshot() -> dict:
         "bucket_signals": [s.to_dict() for s in _bucket_signals],
         "bucket_near_misses": [s.to_dict() for s in _bucket_near_misses[:10]],
         "structural_anomalies": [s.to_dict() for s in _structural_anomalies[:20]],
+        "structural_near_misses": [s.to_dict() for s in _structural_near_misses[:20]],
         "positions": (
             [p.to_dict() for p in open_pos] +
             [p.to_dict() for p in closed_pos[-30:]] +
@@ -480,14 +482,27 @@ async def _refresh_markets() -> None:
         _bucket_near_misses.clear()
         _bucket_near_misses.extend(b_near_misses[:10])
 
-        # Structural anomaly scan: non-adjacent violations for manual review
+        # Structural anomaly scan: non-adjacent violations + near-misses for manual review
         structural = find_structural_anomalies(
             all_groups,
             max_size=_config["max_size"],
             fee_rate=_fee,
+            min_gross_edge=0.0,   # genuine violations only
+        )
+        _near_miss_floor_structural = -(_fee + 0.08)  # within ~15¢ of being a true arb
+        structural_near = find_structural_anomalies(
+            all_groups,
+            max_size=_config["max_size"],
+            fee_rate=_fee,
+            min_gross_edge=_near_miss_floor_structural,
+            top_n=30,
         )
         _structural_anomalies.clear()
         _structural_anomalies.extend(structural)
+        _structural_near_misses.clear()
+        _structural_near_misses.extend(
+            [s for s in structural_near if s.gross_edge < 0.0][:20]
+        )
 
         print(
             f"[Refresh] {_state['markets_fetched']} markets | "

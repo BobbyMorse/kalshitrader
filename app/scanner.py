@@ -252,18 +252,19 @@ def find_structural_anomalies(
     groups: Dict[str, List[ThresholdMarket]],
     max_size: int,
     fee_rate: float = KALSHI_FEE_RATE,
+    min_gross_edge: float = 0.0,
     top_n: int = 30,
 ) -> List[StructuralAnomaly]:
     """
-    Find non-adjacent monotonicity violations (index gap >= 2).
+    Find non-adjacent pairs where bid(higher) > ask(lower) - min_gross_edge.
 
-    A violation bid(higher) > ask(lower) where there are markets between them
-    means one of the middle markets is 'structurally odd' — its price makes the
-    two bookend markets appear inconsistent even though adjacent pairs may not.
+    When min_gross_edge=0 (default): genuine violations only.
+    When min_gross_edge<0: near-miss pairs within abs(min_gross_edge) of being
+    a true arb — useful for showing manual trade candidates.
 
-    Only returns positive gross_edge violations (genuine price inconsistencies).
-    Deduplicates to at most one anomaly per middle market (the best-edge pair
-    that 'exposes' it).  Returns top_n by gross_edge.
+    Non-adjacent means there is at least one market between the pair on the
+    threshold ladder, so a genuine violation implies the middle market(s) are
+    structurally inconsistent with the outer two.
     """
     anomalies: List[StructuralAnomaly] = []
     seen_middle: set = set()      # avoid surfacing the same odd market multiple times
@@ -288,7 +289,7 @@ def find_structural_anomalies(
                     continue
 
                 gross_edge = higher.yes_bid - lower.yes_ask
-                if gross_edge <= 0:
+                if gross_edge < min_gross_edge:
                     continue
 
                 middle = sorted_markets[i + 1 : j]

@@ -182,6 +182,7 @@ export interface WsMessage {
   bucket_signals?: BucketSignal[];
   bucket_near_misses?: BucketSignal[];
   structural_anomalies?: StructuralAnomaly[];
+  structural_near_misses?: StructuralAnomaly[];
   positions?: (Position | BucketPosition)[];
   trades?: TradeRecord[];
   pnl_history?: PnlPoint[];

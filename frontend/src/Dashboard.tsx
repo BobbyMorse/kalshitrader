@@ -809,6 +809,7 @@ export default function Dashboard() {
     bucketSignals,
     bucketNearMisses,
     structuralAnomalies,
+    structuralNearMisses,
     positions,
     trades,
     pnlHistory,
@@ -1176,7 +1177,7 @@ export default function Dashboard() {
                 </Card>
               )}
 
-              {/* Structural Anomalies */}
+              {/* Structural Anomalies (violations) */}
               {structuralAnomalies.length > 0 && (
                 <Card className="rounded-3xl shadow-sm border-purple-100">
                   <CardHeader className="pb-2">
@@ -1193,6 +1194,29 @@ export default function Dashboard() {
                   </CardHeader>
                   <CardContent className="space-y-1.5">
                     {structuralAnomalies.map((sig) => (
+                      <StructuralAnomalyRow key={sig.id} sig={sig} />
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Structural Near-Misses (manual setups) */}
+              {structuralNearMisses.length > 0 && (
+                <Card className="rounded-3xl shadow-sm border-slate-100">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-slate-600">
+                      Structural Near-Misses
+                      <Badge className="rounded-full bg-slate-100 text-slate-600 text-xs">
+                        {structuralNearMisses.length}
+                      </Badge>
+                    </CardTitle>
+                    <p className="text-xs text-slate-400">
+                      Non-adjacent pairs closest to arb — not yet profitable but worth watching.
+                      Edge gap shows how far from break-even. Manual entry only.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-1.5">
+                    {structuralNearMisses.map((sig) => (
                       <StructuralAnomalyRow key={sig.id} sig={sig} />
                     ))}
                   </CardContent>
