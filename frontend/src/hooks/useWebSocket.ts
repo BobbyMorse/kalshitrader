@@ -78,7 +78,7 @@ export function useWebSocket(): BotData & BotControls {
       try {
         const msg: WsMessage = JSON.parse(ev.data as string);
 
-        if (msg.bot_state) setBotState(prev => prev ? { ...prev, ...msg.bot_state } : msg.bot_state);
+        if (msg.bot_state) setBotState(prev => prev ? { ...prev, ...msg.bot_state } : (msg.bot_state ?? null));
         if (msg.config) setConfig(msg.config);
         if (msg.signals) setSignals(msg.signals);
         if (msg.near_misses) setNearMisses(msg.near_misses);
