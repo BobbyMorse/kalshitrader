@@ -572,17 +572,17 @@ function PositionRow({ pos }: { pos: Position }) {
       <div>
         <div className="text-[10px] text-slate-400 uppercase tracking-wide">Entry edge</div>
         <div className="font-mono text-emerald-600 font-semibold">{fmtCents(pos.gross_edge)}</div>
-        <div className="text-[10px] text-slate-400">net {fmtCents(pos.net_edge)}</div>
+        <div className="text-[10px] text-slate-400">worst case {fmtCents(pos.net_edge)}/ct</div>
       </div>
 
-      {/* Locked P&L at expiry */}
+      {/* Worst-case P&L at expiry (one leg resolves, no middle-band bonus) */}
       {isOpen ? (
         <div>
-          <div className="text-[10px] text-slate-400 uppercase tracking-wide">Locked at expiry</div>
-          <div className={`font-mono font-semibold ${pnlColor(pos.net_edge * pos.size)}`}>
+          <div className="text-[10px] text-slate-400 uppercase tracking-wide">Worst case</div>
+          <div className="font-mono font-semibold text-slate-400">
             {fmtPnl(pos.net_edge * pos.size)}
           </div>
-          <div className="text-[10px] text-slate-400">net {fmtCents(pos.net_edge)}/ct · fees incl.</div>
+          <div className="text-[10px] text-slate-400">single-leg · fees incl.</div>
         </div>
       ) : (
         <div>
@@ -597,14 +597,11 @@ function PositionRow({ pos }: { pos: Position }) {
       {/* PnL */}
       <div>
         <div className="text-[10px] text-slate-400 uppercase tracking-wide">
-          {isOpen ? "Mid P&L (est.)" : "Realized"}
+          {isOpen ? "Mid P&L" : "Realized"}
         </div>
-        <div className={`font-mono text-sm ${pnlColor(pnl)} opacity-50`}>
+        <div className={`font-mono text-sm font-semibold ${pnlColor(pnl)}`}>
           {fmtPnl(pnl)}
         </div>
-        {isOpen && (
-          <div className="text-[10px] text-slate-300 italic">spread-distorted</div>
-        )}
         {pos.fees_paid > 0 && (
           <div className="text-[10px] text-slate-400">fees ${pos.fees_paid.toFixed(2)}</div>
         )}

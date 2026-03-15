@@ -212,6 +212,11 @@ def find_violations(
             # Skip markets whose prices haven't been updated yet
             if lower.yes_ask == 0.0 or higher.yes_bid == 0.0:
                 continue
+            # Minimum dollar liquidity: $10 in open interest on each leg
+            if lower.open_interest > 0 and lower.open_interest * lower.yes_ask < 10.0:
+                continue
+            if higher.open_interest > 0 and higher.open_interest * (1.0 - higher.yes_bid) < 10.0:
+                continue
             # P(X >= lower) >= P(X >= higher)  must hold
             # Violation: bid(higher) > ask(lower)
             gross_edge = higher.yes_bid - lower.yes_ask
@@ -295,6 +300,12 @@ def find_structural_anomalies(
 
                 # Skip deep-ITM pairs (BTC/ETH near-certain markets are noise)
                 if lower.yes_ask >= 0.97:
+                    continue
+
+                # Minimum dollar liquidity: $10 on each leg
+                if lower.open_interest > 0 and lower.open_interest * lower.yes_ask < 10.0:
+                    continue
+                if higher.open_interest > 0 and higher.open_interest * (1.0 - higher.yes_bid) < 10.0:
                     continue
 
                 gross_edge = higher.yes_bid - lower.yes_ask
@@ -385,6 +396,16 @@ def find_inverted_legs(
             # (spread=30¢) is a real mispricing. KXCPI at 72¢ ask / 4¢ bid (spread=68¢) is not.
             spread = lower.yes_ask - lower.yes_bid
             if lower.yes_bid < 0.10 or spread > 0.40:
+                continue
+            # Minimum dollar liquidity: $10 in open interest
+            if lower.open_interest > 0 and lower.open_interest * lower.yes_ask < 10.0:
+                continue
+
+            # Bid inversion check: buyers must ALSO confirm the lower market is underpriced.
+            # Normally bid(lower) >= bid(higher) since lower threshold is more likely.
+            # If bid(lower) < bid(higher), the whole book (bids AND asks) is inverted → genuine.
+            # If bid(lower) >= bid(higher) but ask is inverted, the ask is a stale outlier (skip).
+            if lower.yes_bid >= higher.yes_bid:
                 continue
 
             # Inversion: ask(lower) should be >= ask(higher); when inverted, lower is mispriced cheap
