@@ -100,15 +100,29 @@ class KalshiClient:
 
     # ── Internal ─────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _normalize_pem(raw: str) -> str:
+        """Reconstruct a valid PEM block from potentially garbled env-var content.
+        Handles: literal \\n, CRLF, spaces-instead-of-newlines, merged base64 lines.
+        """
+        import re as _re
+        s = raw.replace("\\n", "\n").replace("\r\n", "\n").strip()
+        m = _re.search(r"(-----BEGIN [^-]+-----)(.*?)(-----END [^-]+-----)", s, _re.DOTALL)
+        if not m:
+            return s
+        header, body, footer = m.groups()
+        b64 = _re.sub(r"\s+", "", body)
+        lines = [b64[i : i + 64] for i in range(0, len(b64), 64)]
+        return header + "\n" + "\n".join(lines) + "\n" + footer + "\n"
+
     def _load_private_key(self) -> None:
         # Priority: inline PEM content (env var) > file path
         pem_bytes: Optional[bytes] = None
         if self._private_key_content:
-            # Fly.io / shell env vars sometimes store literal \n instead of real newlines
-            content = self._private_key_content.replace("\\n", "\n").replace("\r\n", "\n")
+            content = self._normalize_pem(self._private_key_content)
             pem_bytes = content.encode()
-            print(f"[KalshiClient] PEM env var present, length={len(content)}, "
-                  f"starts_with_header={content.strip().startswith('-----BEGIN')}")
+            print(f"[KalshiClient] PEM env var: length={len(content)}, "
+                  f"valid_header={content.startswith('-----BEGIN')}")
         elif self.private_key_path:
             path = os.path.expanduser(self.private_key_path)
             if os.path.exists(path):
