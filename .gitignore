@@ -1,0 +1,22 @@
+# Python
+app/venv/
+app/__pycache__/
+app/*.pyc
+app/.env
+*.key
+*.pem
+*.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# State
+app/trader_state.json

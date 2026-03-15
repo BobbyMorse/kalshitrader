@@ -1,0 +1,581 @@
+"""
+Paper trading engine for threshold monotonicity arbitrage.
+
+Entry:  simultaneous paper-fill of both legs at current ask prices.
+Exit:   at expiry (settlement) or manual flatten.
+PnL:    mark-to-market on each scan; realized on close.
+
+One-leg protection:
+- Both legs are filled simultaneously, so no true one-leg exposure in paper mode.
+- If a leg's current exit price drops to near zero, a warning is logged and
+  the position is flagged so the UI can surface it.
+"""
+from __future__ import annotations
+
+import dataclasses
+import json
+import os
+import uuid
+from datetime import datetime, timezone
+from typing import Dict, List, Optional
+
+
+def _mkt_bid(m: dict) -> float:
+    """Extract yes_bid as 0-1 float from a raw market cache dict (handles both formats)."""
+    yb = m.get("yes_bid")
+    if yb is not None:
+        return yb / 100.0 if yb > 1 else float(yb)
+    yb_d = m.get("yes_bid_dollars")
+    return float(yb_d) if yb_d is not None else 0.0
+
+
+def _mkt_ask(m: dict) -> float:
+    """Extract yes_ask as 0-1 float from a raw market cache dict (handles both formats)."""
+    ya = m.get("yes_ask")
+    if ya is not None:
+        return ya / 100.0 if ya > 1 else float(ya)
+    ya_d = m.get("yes_ask_dollars")
+    return float(ya_d) if ya_d is not None else 0.0
+
+from models import BucketPosition, BucketSumSignal, Position, TradeRecord, ViolationSignal
+
+
+# ── Persistence helpers ───────────────────────────────────────────────────────
+
+class _DTEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, datetime):
+            return o.isoformat()
+        return super().default(o)
+
+
+def _dt(s: Optional[str]) -> Optional[datetime]:
+    return datetime.fromisoformat(s) if s else None
+
+
+def _load_position(d: dict) -> Position:
+    return Position(
+        id=d["id"], signal_id=d["signal_id"], series=d["series"],
+        expiry_dt=datetime.fromisoformat(d["expiry_dt"]),
+        lower_ticker=d["lower_ticker"], higher_ticker=d["higher_ticker"],
+        lower_threshold=d["lower_threshold"], higher_threshold=d["higher_threshold"],
+        size=d["size"], lower_entry=d["lower_entry"], higher_entry=d["higher_entry"],
+        entry_cost=d["entry_cost"], entry_time=datetime.fromisoformat(d["entry_time"]),
+        gross_edge=d["gross_edge"], net_edge=d["net_edge"],
+        status=d.get("status", "open"),
+        strategy=d.get("strategy", "threshold_arb"),
+        lower_mid=d.get("lower_mid", 0.0), higher_no_mid=d.get("higher_no_mid", 0.0),
+        unrealized_pnl=d.get("unrealized_pnl", 0.0),
+        realized_pnl=d.get("realized_pnl", 0.0), fees_paid=d.get("fees_paid", 0.0),
+        exit_time=_dt(d.get("exit_time")), exit_reason=d.get("exit_reason", ""),
+    )
+
+
+def _load_bucket_position(d: dict) -> BucketPosition:
+    return BucketPosition(
+        id=d["id"], signal_id=d["signal_id"], series=d["series"],
+        expiry_dt=datetime.fromisoformat(d["expiry_dt"]),
+        event_ticker=d["event_ticker"],
+        bucket_tickers=d["bucket_tickers"], bucket_entries=d["bucket_entries"],
+        size=d["size"], entry_cost=d["entry_cost"],
+        gross_edge=d["gross_edge"], net_edge=d["net_edge"],
+        entry_time=datetime.fromisoformat(d["entry_time"]),
+        status=d.get("status", "open"),
+        unrealized_pnl=d.get("unrealized_pnl", 0.0),
+        realized_pnl=d.get("realized_pnl", 0.0), fees_paid=d.get("fees_paid", 0.0),
+        exit_time=_dt(d.get("exit_time")), exit_reason=d.get("exit_reason", ""),
+    )
+
+
+def _load_trade(d: dict) -> TradeRecord:
+    return TradeRecord(
+        id=d["id"], position_id=d["position_id"],
+        timestamp=datetime.fromisoformat(d["timestamp"]),
+        action=d["action"], series=d["series"],
+        lower_ticker=d["lower_ticker"], higher_ticker=d["higher_ticker"],
+        lower_threshold=d["lower_threshold"], higher_threshold=d["higher_threshold"],
+        size=d["size"], lower_entry=d["lower_entry"], higher_entry=d["higher_entry"],
+        gross_edge=d["gross_edge"], net_edge=d["net_edge"],
+        pnl=d.get("pnl"), fees=d.get("fees", 0.0), status=d["status"],
+        strategy=d.get("strategy", "threshold_arb"),
+    )
+
+KALSHI_FEE_RATE = 0.07
+STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trader_state.json")
+
+
+class PaperTrader:
+    def __init__(self, max_size: int = 10, fee_rate: float = KALSHI_FEE_RATE):
+        self.max_size = max_size
+        self.fee_rate = fee_rate
+
+        self._open: Dict[str, Position] = {}            # pos_id → Position
+        self._closed: List[Position] = []
+        self._trades: List[TradeRecord] = []
+        self._positioned: Dict[str, str] = {}           # signal_id → pos_id
+
+        # Bucket sum arb positions
+        self._bucket_open: Dict[str, BucketPosition] = {}
+        self._bucket_closed: List[BucketPosition] = []
+        self._bucket_positioned: Dict[str, str] = {}   # signal_id → pos_id
+
+    # ── Read-only properties ──────────────────────────────────────────────────
+
+    @property
+    def open_positions(self) -> List[Position]:
+        return list(self._open.values())
+
+    @property
+    def closed_positions(self) -> List[Position]:
+        return self._closed
+
+    @property
+    def all_trades(self) -> List[TradeRecord]:
+        return self._trades
+
+    @property
+    def realized_pnl(self) -> float:
+        return (sum(p.realized_pnl for p in self._closed) +
+                sum(p.realized_pnl for p in self._bucket_closed))
+
+    @property
+    def unrealized_pnl(self) -> float:
+        # For threshold/structural arb: locked expiry P&L = net_edge × size (fees included, worst-case)
+        # For bucket arb: mid-based is meaningful (exhaustive set, one pays $1)
+        threshold_locked = sum(p.net_edge * p.size for p in self._open.values())
+        bucket_mid = sum(p.unrealized_pnl for p in self._bucket_open.values())
+        return threshold_locked + bucket_mid
+
+    @property
+    def bucket_open_positions(self) -> List[BucketPosition]:
+        return list(self._bucket_open.values())
+
+    @property
+    def bucket_closed_positions(self) -> List[BucketPosition]:
+        return self._bucket_closed
+
+    def is_positioned(self, signal_id: str) -> bool:
+        return signal_id in self._positioned or signal_id in self._bucket_positioned
+
+    # ── Entry ─────────────────────────────────────────────────────────────────
+
+    def execute(self, signal: ViolationSignal, strategy: str = "threshold_arb") -> Optional[Position]:
+        """Paper-fill both legs at current ask prices. Returns the new Position."""
+        if self.is_positioned(signal.id):
+            return None
+
+        size = min(signal.avail_size, self.max_size)
+        if size <= 0:
+            return None
+
+        pos_id = str(uuid.uuid4())[:8]
+        now = datetime.now(timezone.utc)
+
+        pos = Position(
+            id=pos_id,
+            signal_id=signal.id,
+            series=signal.series,
+            expiry_dt=signal.expiry_dt,
+            lower_ticker=signal.lower.ticker,
+            higher_ticker=signal.higher.ticker,
+            lower_threshold=signal.lower.threshold,
+            higher_threshold=signal.higher.threshold,
+            size=size,
+            lower_entry=signal.lower.yes_ask,           # pay YES ask at lower
+            higher_entry=1.0 - signal.higher.yes_bid,   # pay NO = 1 - bid at higher
+            entry_cost=signal.entry_cost,
+            entry_time=now,
+            gross_edge=signal.gross_edge,
+            net_edge=signal.net_edge,
+            status="open",
+            strategy=strategy,
+            lower_mid=signal.lower.mid(),
+            higher_no_mid=1.0 - signal.higher.mid(),
+        )
+        # Initial unrealized mark
+        pos.unrealized_pnl = (pos.lower_mid + pos.higher_no_mid - pos.entry_cost) * size
+
+        self._open[pos_id] = pos
+        self._positioned[signal.id] = pos_id
+
+        self._trades.append(TradeRecord(
+            id=str(uuid.uuid4())[:8],
+            position_id=pos_id,
+            timestamp=now,
+            action="OPEN",
+            series=signal.series,
+            lower_ticker=signal.lower.ticker,
+            higher_ticker=signal.higher.ticker,
+            lower_threshold=signal.lower.threshold,
+            higher_threshold=signal.higher.threshold,
+            size=size,
+            lower_entry=signal.lower.yes_ask,
+            higher_entry=1.0 - signal.higher.yes_bid,
+            gross_edge=signal.gross_edge,
+            net_edge=signal.net_edge,
+            pnl=None,
+            fees=0.0,
+            status="paper_filled",
+            strategy=strategy,
+        ))
+
+        print(
+            f"[PaperTrader] OPEN {pos_id} [{strategy}]: "
+            f"{signal.lower.ticker} YES@{signal.lower.yes_ask:.2f} + "
+            f"{signal.higher.ticker} NO@{1-signal.higher.yes_bid:.2f} | "
+            f"edge={signal.gross_edge:.3f} size={size}"
+        )
+        self.save()
+        return pos
+
+    # ── Mark-to-market ────────────────────────────────────────────────────────
+
+    def update_marks(self, market_map: Dict[str, dict]) -> None:
+        """
+        Refresh unrealized PnL for all open positions.
+        Settle any that have passed their expiry.
+        market_map: ticker → raw Kalshi market dict.
+        """
+        now = datetime.now(timezone.utc)
+        to_settle = []
+
+        for pos in list(self._open.values()):
+            if pos.expiry_dt <= now:
+                to_settle.append(pos.id)
+                continue
+
+            lower_m = market_map.get(pos.lower_ticker)
+            higher_m = market_map.get(pos.higher_ticker)
+            if lower_m is None or higher_m is None:
+                continue
+
+            lower_bid = _mkt_bid(lower_m)
+            lower_ask = _mkt_ask(lower_m)
+            higher_bid = _mkt_bid(higher_m)
+            higher_ask = _mkt_ask(higher_m)
+
+            pos.lower_mid = (lower_bid + lower_ask) / 2
+            pos.higher_no_mid = 1.0 - (higher_bid + higher_ask) / 2
+            # Use mid-to-mid for unrealized (matches "Current value" display)
+            pos.unrealized_pnl = (pos.lower_mid + pos.higher_no_mid - pos.entry_cost) * pos.size
+
+            # One-leg exposure warnings
+            if lower_bid <= 0.02:
+                print(f"[PaperTrader] WARNING {pos.id}: lower leg near zero (bid={lower_bid:.2f})")
+                pos.status = "one_leg_risk"
+            elif higher_bid >= 0.98:
+                print(f"[PaperTrader] WARNING {pos.id}: higher leg near settled (bid={higher_bid:.2f})")
+                pos.status = "one_leg_risk"
+            else:
+                pos.status = "open"
+
+        for pos_id in to_settle:
+            self._settle_expired(pos_id)
+
+    # ── Settlement ────────────────────────────────────────────────────────────
+
+    def _settle_expired(self, pos_id: str) -> None:
+        """
+        Settle a position at expiry.
+
+        In paper trading we use the worst-case guaranteed outcome:
+          - At least one leg pays $1 (guaranteed by the arb structure).
+          - Worst case: exactly one leg wins → payout = $1 per contract pair.
+          - Fee: 7% of $1 = $0.07 per contract pair.
+
+        Realized PnL per contract = $1 - entry_cost - $0.07 = gross_edge - $0.07 = net_edge.
+        """
+        pos = self._open.pop(pos_id, None)
+        if pos is None:
+            return
+
+        fee_per_contract = self.fee_rate * 1.0   # 7% on the $1 that wins
+        realized = pos.net_edge * pos.size        # (gross_edge - fee_rate) * size
+
+        pos.realized_pnl = realized
+        pos.fees_paid = fee_per_contract * pos.size
+        pos.unrealized_pnl = 0.0
+        pos.status = "closed"
+        pos.exit_time = datetime.now(timezone.utc)
+        pos.exit_reason = "expired"
+
+        self._closed.append(pos)
+        self._positioned.pop(pos.signal_id, None)
+
+        self._trades.append(TradeRecord(
+            id=str(uuid.uuid4())[:8],
+            position_id=pos.id,
+            timestamp=pos.exit_time,
+            action="CLOSE_EXPIRY",
+            series=pos.series,
+            lower_ticker=pos.lower_ticker,
+            higher_ticker=pos.higher_ticker,
+            lower_threshold=pos.lower_threshold,
+            higher_threshold=pos.higher_threshold,
+            size=pos.size,
+            lower_entry=pos.lower_entry,
+            higher_entry=pos.higher_entry,
+            gross_edge=pos.gross_edge,
+            net_edge=pos.net_edge,
+            pnl=realized,
+            fees=fee_per_contract * pos.size,
+            status="expired",
+            strategy=pos.strategy,
+        ))
+
+        print(f"[PaperTrader] SETTLE {pos.id} (expired): PnL=${realized:.2f}")
+        self.save()
+
+    # ── Manual flatten ────────────────────────────────────────────────────────
+
+    def flatten(self, pos_id: str, market_map: Dict[str, dict]) -> Optional[Position]:
+        """
+        Close both legs at current market prices (paper slippage = bid/ask spread).
+          lower YES: sell at yes_bid
+          higher NO: sell at (1 - yes_ask) of higher
+        """
+        pos = self._open.get(pos_id)
+        if pos is None:
+            return None
+
+        lower_m = market_map.get(pos.lower_ticker, {})
+        higher_m = market_map.get(pos.higher_ticker, {})
+
+        lower_exit = _mkt_bid(lower_m) if lower_m else 0.0
+        higher_no_exit = 1.0 - (_mkt_ask(higher_m) if higher_m else pos.higher_entry)
+
+        gross_payout = lower_exit + higher_no_exit
+        gain = max(0.0, gross_payout - pos.entry_cost)
+        fee = self.fee_rate * gain
+        realized = (gross_payout - pos.entry_cost - fee) * pos.size
+
+        pos.realized_pnl = realized
+        pos.fees_paid = fee * pos.size
+        pos.unrealized_pnl = 0.0
+        pos.status = "closed"
+        pos.exit_time = datetime.now(timezone.utc)
+        pos.exit_reason = "flattened"
+
+        self._open.pop(pos_id)
+        self._closed.append(pos)
+        self._positioned.pop(pos.signal_id, None)
+
+        self._trades.append(TradeRecord(
+            id=str(uuid.uuid4())[:8],
+            position_id=pos.id,
+            timestamp=pos.exit_time,
+            action="CLOSE_FLATTEN",
+            series=pos.series,
+            lower_ticker=pos.lower_ticker,
+            higher_ticker=pos.higher_ticker,
+            lower_threshold=pos.lower_threshold,
+            higher_threshold=pos.higher_threshold,
+            size=pos.size,
+            lower_entry=pos.lower_entry,
+            higher_entry=pos.higher_entry,
+            gross_edge=pos.gross_edge,
+            net_edge=pos.net_edge,
+            pnl=realized,
+            fees=fee * pos.size,
+            status="flattened",
+            strategy=pos.strategy,
+        ))
+
+        print(f"[PaperTrader] FLATTEN {pos.id}: PnL=${realized:.2f}")
+        self.save()
+        return pos
+
+    # ── Bucket entry ──────────────────────────────────────────────────────────
+
+    def execute_bucket(self, signal: BucketSumSignal) -> Optional[BucketPosition]:
+        """Paper-fill all bucket YES legs simultaneously at current ask prices."""
+        if signal.id in self._bucket_positioned:
+            return None
+
+        size = min(signal.avail_size, self.max_size)
+        if size <= 0:
+            return None
+
+        pos_id = str(uuid.uuid4())[:8]
+        now = datetime.now(timezone.utc)
+
+        bucket_entries = [b.yes_ask for b in sorted(signal.buckets, key=lambda x: x.bucket_floor)]
+        entry_cost = sum(bucket_entries)
+
+        pos = BucketPosition(
+            id=pos_id,
+            signal_id=signal.id,
+            series=signal.series,
+            expiry_dt=signal.expiry_dt,
+            event_ticker=signal.id,
+            bucket_tickers=[b.ticker for b in sorted(signal.buckets, key=lambda x: x.bucket_floor)],
+            bucket_entries=bucket_entries,
+            size=size,
+            entry_cost=entry_cost,
+            gross_edge=signal.gross_edge,
+            net_edge=signal.net_edge,
+            entry_time=now,
+        )
+        # Initial unrealized: mark at current bids
+        sum_bids = sum(b.yes_bid for b in signal.buckets)
+        pos.unrealized_pnl = (sum_bids - entry_cost) * size
+
+        self._bucket_open[pos_id] = pos
+        self._bucket_positioned[signal.id] = pos_id
+
+        self._trades.append(TradeRecord(
+            id=str(uuid.uuid4())[:8],
+            position_id=pos_id,
+            timestamp=now,
+            action="OPEN",
+            series=signal.series,
+            lower_ticker=signal.id,
+            higher_ticker=f"bucket_sum_{len(signal.buckets)}",
+            lower_threshold=0.0,
+            higher_threshold=0.0,
+            size=size,
+            lower_entry=entry_cost,
+            higher_entry=0.0,
+            gross_edge=signal.gross_edge,
+            net_edge=signal.net_edge,
+            pnl=None,
+            fees=0.0,
+            status="paper_filled",
+            strategy="bucket_arb",
+        ))
+
+        print(
+            f"[PaperTrader] OPEN BUCKET {pos_id}: "
+            f"{signal.id} {len(signal.buckets)} buckets "
+            f"cost={entry_cost:.3f} edge={signal.gross_edge:.3f} size={size}"
+        )
+        self.save()
+        return pos
+
+    # ── Bucket MTM + settlement ────────────────────────────────────────────────
+
+    def update_marks_bucket(self, market_map: Dict[str, dict]) -> None:
+        """Refresh unrealized PnL for bucket positions; settle expired ones."""
+        now = datetime.now(timezone.utc)
+        to_settle = []
+
+        for pos in list(self._bucket_open.values()):
+            if pos.expiry_dt <= now:
+                to_settle.append(pos.id)
+                continue
+
+            # MTM = sum(current bid for each bucket) - entry_cost
+            sum_bids = 0.0
+            priced = 0
+            for t in pos.bucket_tickers:
+                m = market_map.get(t)
+                if m:
+                    b = _mkt_bid(m)
+                    if b > 0:
+                        priced += 1
+                        sum_bids += b
+            if priced == len(pos.bucket_tickers):
+                pos.unrealized_pnl = (sum_bids - pos.entry_cost) * pos.size
+
+        for pos_id in to_settle:
+            self._settle_bucket(pos_id)
+
+    def _settle_bucket(self, pos_id: str) -> None:
+        """Settle at expiry using guaranteed net_edge."""
+        pos = self._bucket_open.pop(pos_id, None)
+        if pos is None:
+            return
+
+        fee_per_contract = self.fee_rate * 1.0
+        realized = pos.net_edge * pos.size
+
+        pos.realized_pnl = realized
+        pos.fees_paid = fee_per_contract * pos.size
+        pos.unrealized_pnl = 0.0
+        pos.status = "closed"
+        pos.exit_time = datetime.now(timezone.utc)
+        pos.exit_reason = "expired"
+
+        self._bucket_closed.append(pos)
+        self._bucket_positioned.pop(pos.signal_id, None)
+
+        self._trades.append(TradeRecord(
+            id=str(uuid.uuid4())[:8],
+            position_id=pos.id,
+            timestamp=pos.exit_time,
+            action="CLOSE_EXPIRY",
+            series=pos.series,
+            lower_ticker=pos.event_ticker,
+            higher_ticker=f"bucket_sum_{len(pos.bucket_tickers)}",
+            lower_threshold=0.0,
+            higher_threshold=0.0,
+            size=pos.size,
+            lower_entry=pos.entry_cost,
+            higher_entry=0.0,
+            gross_edge=pos.gross_edge,
+            net_edge=pos.net_edge,
+            pnl=realized,
+            fees=pos.fees_paid,
+            status="expired",
+            strategy="bucket_arb",
+        ))
+
+        print(f"[PaperTrader] SETTLE BUCKET {pos.id} (expired): PnL=${realized:.2f}")
+        self.save()
+
+    # ── Persistence ───────────────────────────────────────────────────────────
+
+    def save(self, path: str = STATE_FILE) -> None:
+        """Atomically persist all state to a JSON file."""
+        state = {
+            "open": {k: dataclasses.asdict(v) for k, v in self._open.items()},
+            "closed": [dataclasses.asdict(v) for v in self._closed],
+            "trades": [dataclasses.asdict(v) for v in self._trades],
+            "positioned": dict(self._positioned),
+            "bucket_open": {k: dataclasses.asdict(v) for k, v in self._bucket_open.items()},
+            "bucket_closed": [dataclasses.asdict(v) for v in self._bucket_closed],
+            "bucket_positioned": dict(self._bucket_positioned),
+        }
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(state, f, cls=_DTEncoder, indent=2)
+        os.replace(tmp, path)
+
+    def load(self, path: str = STATE_FILE) -> None:
+        """Load persisted state from JSON file (called once at startup)."""
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path) as f:
+                state = json.load(f)
+            for k, v in state.get("open", {}).items():
+                self._open[k] = _load_position(v)
+            for v in state.get("closed", []):
+                self._closed.append(_load_position(v))
+            for v in state.get("trades", []):
+                self._trades.append(_load_trade(v))
+            self._positioned.update(state.get("positioned", {}))
+            for k, v in state.get("bucket_open", {}).items():
+                self._bucket_open[k] = _load_bucket_position(v)
+            for v in state.get("bucket_closed", []):
+                self._bucket_closed.append(_load_bucket_position(v))
+            self._bucket_positioned.update(state.get("bucket_positioned", {}))
+            print(
+                f"[PaperTrader] Loaded state: {len(self._open)} open, "
+                f"{len(self._closed)} closed, {len(self._trades)} trades, "
+                f"{len(self._bucket_open)} bucket_open"
+            )
+        except Exception as e:
+            print(f"[PaperTrader] Failed to load state from {path}: {e}")
+
+    # ── Reset ─────────────────────────────────────────────────────────────────
+
+    def reset(self) -> None:
+        self._open.clear()
+        self._closed.clear()
+        self._trades.clear()
+        self._positioned.clear()
+        self._bucket_open.clear()
+        self._bucket_closed.clear()
+        self._bucket_positioned.clear()
+        self.save()
