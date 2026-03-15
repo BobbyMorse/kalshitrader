@@ -248,24 +248,6 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                             if not _trader.is_positioned(v.id):
                                 _trader.execute(v, strategy="threshold_arb")
                     broadcast_needed = True
-                elif len(group_markets) >= 2:
-                    # No violation yet — check near-miss for logging only
-                    _min_edge = _config["min_gross_edge"]
-                    near = find_violations(
-                        {event_ticker: group_markets},
-                        min_gross_edge=_min_edge - 0.15,
-                        max_size=_config["max_size"],
-                        fee_rate=_config["fee_rate"],
-                        allow_negative_edge=True,
-                        adjacent_only=True,
-                    )
-                    near_below = [v for v in near if v.gross_edge < _min_edge]
-                    if near_below:
-                        top = near_below[0]
-                        print(
-                            f"[NEAR-TICK] {top.id}: edge={top.gross_edge:.3f} "
-                            f"(gap={_min_edge - top.gross_edge:.3f})"
-                        )
 
     # ── Bucket sum arb check ──────────────────────────────────────────────────
     bm = _bucket_map.get(ticker)
@@ -336,14 +318,22 @@ async def _refresh_markets() -> None:
 
     try:
         markets = await _client.get_markets(status="open")
-        _market_cache.clear()
-        _market_cache.update({m["ticker"]: m for m in markets})
         _state["markets_fetched"] = len(markets)
 
         groups = group_threshold_markets(markets)
         int_groups = group_integer_threshold_markets(markets)
         bucket_groups = group_bucket_markets(markets)
         _state["groups_found"] = len(groups) + len(int_groups) + len(bucket_groups)
+
+        # Only cache the ~700 threshold/bucket markets; drop the other 59k to save memory
+        relevant = (
+            {tm.ticker for tms in groups.values() for tm in tms}
+            | {tm.ticker for tms in int_groups.values() for tm in tms}
+            | {bm.ticker for bms in bucket_groups.values() for bm in bms}
+        )
+        _market_cache.clear()
+        _market_cache.update({m["ticker"]: m for m in markets if m["ticker"] in relevant})
+        del markets  # free 60k-item list before the rest of the refresh
 
         # Rebuild threshold map + groups, subscribe feed to new tickers.
         # Preserve live WS prices: new objects start at 0 from REST list;
