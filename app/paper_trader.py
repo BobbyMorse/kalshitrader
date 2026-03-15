@@ -273,6 +273,7 @@ class PaperTrader:
         """
         now = datetime.now(timezone.utc)
         to_settle = []
+        to_auto_flatten = []  # structural arb positions where mid P&L turned positive
 
         for pos in list(self._open.values()):
             if pos.expiry_dt <= now:
@@ -304,8 +305,17 @@ class PaperTrader:
             else:
                 pos.status = "open"
 
+            # Auto-exit structural arb when mid P&L goes positive:
+            # the mispricing has corrected — capture profit now rather than hold to expiry
+            if pos.strategy == "structural_arb" and pos.unrealized_pnl > 0:
+                to_auto_flatten.append(pos.id)
+                print(f"[PaperTrader] AUTO-FLATTEN structural {pos.id}: "
+                      f"mid P&L=${pos.unrealized_pnl:.2f} > 0, locking profit")
+
         for pos_id in to_settle:
             self._settle_expired(pos_id)
+        for pos_id in to_auto_flatten:
+            self.flatten(pos_id, market_map)
 
     # ── Settlement ────────────────────────────────────────────────────────────
 

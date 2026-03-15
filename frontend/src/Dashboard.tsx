@@ -374,8 +374,8 @@ function StructuralAnomalyRow({ sig }: { sig: StructuralAnomaly }) {
             <span className="text-slate-300 mx-1">·</span>
             cost {fmtCents(sig.entry_cost)}
             <span className="text-slate-300 mx-1">·</span>
-            <span className={sig.gross_edge >= 0 ? "text-green-600 font-semibold" : "text-red-500 font-semibold"}>
-              net {fmtCents(sig.gross_edge)}/contract
+            <span className={sig.net_edge >= 0 ? "text-green-600 font-semibold" : "text-red-500 font-semibold"}>
+              net {fmtCents(sig.net_edge)}/contract
             </span>
           </div>
         </div>
@@ -474,8 +474,8 @@ function NearMissRow({ sig, threshold }: { sig: ViolationSignal; threshold: numb
           <span className="text-slate-300 mx-1">·</span>
           cost {fmtCents(sig.entry_cost)}
           <span className="text-slate-300 mx-1">·</span>
-          <span className={sig.gross_edge >= 0 ? "text-green-600 font-semibold" : "text-red-500 font-semibold"}>
-            net {fmtCents(sig.gross_edge)}/contract
+          <span className={sig.net_edge >= 0 ? "text-green-600 font-semibold" : "text-red-500 font-semibold"}>
+            net {fmtCents(sig.net_edge)}/contract
           </span>
         </div>
       </div>
@@ -1258,8 +1258,8 @@ export default function Dashboard() {
                           <div className="mt-1 text-[10px] text-slate-400 font-mono">
                             Buy YES ×{sig.bucket_count} · cost {fmtCents(sig.sum_asks)}
                             <span className="text-slate-300 mx-1">·</span>
-                            <span className={sig.gross_edge >= 0 ? "text-green-600 font-semibold" : "text-red-500 font-semibold"}>
-                              net {fmtCents(sig.gross_edge)}/contract
+                            <span className={sig.net_edge >= 0 ? "text-green-600 font-semibold" : "text-red-500 font-semibold"}>
+                              net {fmtCents(sig.net_edge)}/contract
                             </span>
                           </div>
                         </div>

@@ -293,6 +293,10 @@ def find_structural_anomalies(
                 if lower.yes_ask == 0.0 or higher.yes_bid == 0.0:
                     continue
 
+                # Skip deep-ITM pairs (BTC/ETH near-certain markets are noise)
+                if lower.yes_ask >= 0.97:
+                    continue
+
                 gross_edge = higher.yes_bid - lower.yes_ask
                 if gross_edge < min_gross_edge:
                     continue
@@ -374,6 +378,12 @@ def find_inverted_legs(
             if lower.yes_ask <= 0 or higher.yes_ask <= 0:
                 continue
             if lower.ticker in seen:
+                continue
+
+            # Liquidity filter: bid must be at least 50% of ask and ≥ 10¢
+            # A bid=0 or bid<<ask means the market has no real buyers at the ask price —
+            # buying at the ask would immediately show a massive unrealized loss.
+            if lower.yes_bid < 0.10 or lower.yes_bid < lower.yes_ask * 0.5:
                 continue
 
             # Inversion: ask(lower) should be >= ask(higher); when inverted, lower is mispriced cheap
