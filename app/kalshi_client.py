@@ -109,7 +109,10 @@ class KalshiClient:
         s = raw.replace("\\n", "\n").replace("\r\n", "\n").strip()
         m = _re.search(r"(-----BEGIN [^-]+-----)(.*?)(-----END [^-]+-----)", s, _re.DOTALL)
         if not m:
-            return s
+            # No PEM headers — content is raw base64 body; wrap with RSA headers
+            b64 = _re.sub(r"\s+", "", s)
+            lines = [b64[i : i + 64] for i in range(0, len(b64), 64)]
+            return "-----BEGIN RSA PRIVATE KEY-----\n" + "\n".join(lines) + "\n-----END RSA PRIVATE KEY-----\n"
         header, body, footer = m.groups()
         b64 = _re.sub(r"\s+", "", body)
         lines = [b64[i : i + 64] for i in range(0, len(b64), 64)]
