@@ -345,11 +345,18 @@ async def _refresh_markets() -> None:
         bucket_groups = group_bucket_markets(markets)
         _state["groups_found"] = len(groups) + len(int_groups) + len(bucket_groups)
 
-        # Rebuild threshold map + groups, subscribe feed to new tickers
+        # Rebuild threshold map + groups, subscribe feed to new tickers.
+        # Preserve live WS prices: new objects start at 0 from REST list;
+        # carry over bid/ask from the old in-memory object so the scan uses
+        # real prices rather than waiting for REST warmup.
         new_tickers: List[str] = []
         for event_ticker, tms in groups.items():
             _threshold_groups[event_ticker] = [tm.ticker for tm in tms]
             for tm in tms:
+                old = _threshold_map.get(tm.ticker)
+                if old is not None and old.yes_bid > 0:
+                    tm.yes_bid = old.yes_bid
+                    tm.yes_ask = old.yes_ask
                 if tm.ticker not in _threshold_map:
                     new_tickers.append(tm.ticker)
                 _threshold_map[tm.ticker] = tm
@@ -358,6 +365,10 @@ async def _refresh_markets() -> None:
         for event_ticker, tms in int_groups.items():
             _int_threshold_groups[event_ticker] = [tm.ticker for tm in tms]
             for tm in tms:
+                old = _int_threshold_map.get(tm.ticker)
+                if old is not None and old.yes_bid > 0:
+                    tm.yes_bid = old.yes_bid
+                    tm.yes_ask = old.yes_ask
                 if tm.ticker not in _int_threshold_map:
                     new_tickers.append(tm.ticker)
                 _int_threshold_map[tm.ticker] = tm
@@ -366,6 +377,10 @@ async def _refresh_markets() -> None:
         for event_ticker, bms in bucket_groups.items():
             _bucket_groups[event_ticker] = [bm.ticker for bm in bms]
             for bm in bms:
+                old_bm = _bucket_map.get(bm.ticker)
+                if old_bm is not None and old_bm.yes_bid > 0:
+                    bm.yes_bid = old_bm.yes_bid
+                    bm.yes_ask = old_bm.yes_ask
                 if bm.ticker not in _bucket_map:
                     new_tickers.append(bm.ticker)
                 _bucket_map[bm.ticker] = bm
