@@ -341,7 +341,7 @@ function StructuralAnomalyRow({ sig }: { sig: StructuralAnomaly }) {
       const res = await fetch(`${API}/structural/${encodeURIComponent(sig.id)}/trade`, { method: "POST" });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert(`Trade failed: ${err.detail ?? res.statusText}`);
+        alert(`Trade failed (${res.status}): ${err.detail || err.message || res.statusText || "unknown error"}`);
       } else {
         setTraded(true);
       }

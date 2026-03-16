@@ -916,25 +916,30 @@ async def bot_reset() -> dict:
 
 @app.post("/structural/{signal_id}/trade")
 async def trade_structural(signal_id: str) -> dict:
-    """Manually execute a structural anomaly as a threshold arb trade."""
-    anomaly = next((a for a in _structural_anomalies if a.id == signal_id), None)
-    if anomaly is None:
-        raise HTTPException(status_code=404, detail="Structural anomaly not found")
-    # Convert to a ViolationSignal so the paper trader can execute it
-    from datetime import datetime, timezone
-    sig = ViolationSignal(
-        id=anomaly.id,
-        series=anomaly.series,
-        expiry_dt=anomaly.expiry_dt,
-        lower=anomaly.lower,
-        higher=anomaly.higher,
-        gross_edge=anomaly.gross_edge,
-        net_edge=anomaly.net_edge,
-        entry_cost=anomaly.entry_cost,
-        avail_size=anomaly.avail_size,
-        detected_at=anomaly.detected_at,
+    """Manually execute a structural anomaly or near-miss as a threshold arb trade."""
+    # Search both actual violations and near-misses (user may trade either)
+    anomaly = next(
+        (a for a in _structural_anomalies + _structural_near_misses if a.id == signal_id),
+        None,
     )
-    pos = _trader.execute(sig, strategy="structural_arb")
+    if anomaly is None:
+        raise HTTPException(status_code=404, detail=f"Structural signal not found: {signal_id!r}")
+    try:
+        sig = ViolationSignal(
+            id=anomaly.id,
+            series=anomaly.series,
+            expiry_dt=anomaly.expiry_dt,
+            lower=anomaly.lower,
+            higher=anomaly.higher,
+            gross_edge=anomaly.gross_edge,
+            net_edge=anomaly.net_edge,
+            entry_cost=anomaly.entry_cost,
+            avail_size=anomaly.avail_size,
+            detected_at=anomaly.detected_at,
+        )
+        pos = _trader.execute(sig, strategy="structural_arb")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Execution error: {exc}")
     if pos is None:
         raise HTTPException(status_code=409, detail="Already positioned or zero size")
     await _broadcast(_snapshot())
