@@ -408,11 +408,12 @@ def find_inverted_legs(
             if lower.ticker in seen:
                 continue
 
-            # Liquidity filter: bid ≥ 10¢ and spread (ask - bid) ≤ 40¢.
-            # Ratio-based checks are too aggressive — KXFED 3.25% at 50¢ ask with 20¢ bid
-            # (spread=30¢) is a real mispricing. KXCPI at 72¢ ask / 4¢ bid (spread=68¢) is not.
+            # Liquidity filter: bid ≥ 10¢ and spread (ask - bid) ≤ 40¢ on BOTH markets.
+            # Wide spread on either leg = thin/unreliable price (e.g. adj_higher at 93¢ ask / 7¢ bid
+            # → 86¢ spread means the 93¢ ask is a lone outlier, not a real market price).
             spread = lower.yes_ask - lower.yes_bid
-            if lower.yes_bid < 0.10 or spread > 0.40:
+            adj_spread = higher.yes_ask - higher.yes_bid
+            if lower.yes_bid < 0.10 or spread > 0.40 or adj_spread > 0.40:
                 continue
             # Minimum dollar liquidity: $50 in open interest AND ≥20 contracts.
             # Note: open_interest > 0 guard intentionally removed so OI=0 is rejected.
