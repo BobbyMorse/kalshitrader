@@ -296,6 +296,18 @@ class KalshiClient:
         "KXPCE",        # PCE inflation
         "KXRETAIL",     # Retail sales
         "KXHOUSING",    # Housing starts / permits
+        # ── Gas prices (AAA US retail) ───────────────────────────────────────
+        "KXAAAGASM",        # US national monthly gas price
+        "KXAAAGASMAXTX",    # Texas max gas price
+        "KXAAAGASMINTX",    # Texas min gas price
+        "KXAAAGASMAXNY",    # New York max gas price
+        "KXAAAGASMINNY",    # New York min gas price
+        "KXAAAGASMAXFL",    # Florida max gas price
+        "KXAAAGASMINFL",    # Florida min gas price
+        "KXAAAGASMAXCA",    # California max gas price
+        "KXAAAGASMINCA",    # California min gas price
+        "KXNGASMAX",        # Natural gas (Henry Hub) max
+        "KXNGASMIN",        # Natural gas (Henry Hub) min
         # ── Sports ──────────────────────────────────────────────────────────
         "KXNBAGM",      # NBA game winners
         "KXNBAPLAYER",  # NBA player props

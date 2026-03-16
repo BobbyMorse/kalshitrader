@@ -657,7 +657,7 @@ async def _refresh_markets() -> None:
             bucket_groups,
             min_gross_edge=_min_edge - 0.05,
             max_size=_config["max_size"],
-            fee_rate=0,
+            fee_rate=_fee,
             allow_negative_edge=True,
             require_liquidity=False,
         )
