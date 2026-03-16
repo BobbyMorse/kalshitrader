@@ -1028,7 +1028,7 @@ export default function Dashboard() {
             <div>
               <div className="flex items-center gap-2 text-sm text-slate-500 mb-2">
                 <Activity className="h-4 w-4" />
-                <span>Threshold Monotonicity Arb</span>
+                <span>Kalshi Ladder Arb</span>
                 <span
                   className={`flex items-center gap-1 text-xs font-medium ml-2 ${
                     connected ? "text-emerald-600" : "text-slate-400"
@@ -1060,11 +1060,12 @@ export default function Dashboard() {
                 )}
               </div>
               <h1 className="text-2xl font-semibold text-slate-900">
-                Kalshi Threshold Ladder Scanner
+                Kalshi Ladder Arb Scanner
               </h1>
               <p className="mt-1 text-sm text-slate-500 max-w-xl">
-                Detects violations of P(X≥a) ≥ P(X≥b) for a &lt; b. Trades: buy YES at lower +
-                buy NO at higher for guaranteed $1 minimum payout per pair.
+                Finds mispricings across threshold markets where buying both sides costs less than
+                $1 — yet one side always wins. Profit = spread between what you pay and $1 payout,
+                minus fees.
               </p>
 
               <div className="mt-3 flex flex-wrap gap-2">
@@ -1583,31 +1584,29 @@ export default function Dashboard() {
               </CardHeader>
               <CardContent className="text-sm text-slate-600 space-y-2">
                 <p>
-                  <strong>Monotonicity constraint:</strong> For two threshold levels a &lt; b on
-                  the same underlying and expiry, the market price of P(X≥a) must be ≥ P(X≥b),
-                  since exceeding a lower bar is strictly more likely.
+                  <strong>The setup:</strong> On a price ladder (e.g. BTC closes above $90k /
+                  $95k / $100k), the lower threshold must be priced higher — it's easier to clear.
+                  When that relationship breaks, there's a free lunch.
                 </p>
                 <p>
-                  <strong>Violation signal:</strong>{" "}
-                  <code className="bg-slate-100 px-1 rounded">bid(b) − ask(a) &gt; threshold</code>.
-                  This means you can simultaneously buy YES at level a and buy NO at level b for
-                  a total cost less than $1, while the combined position pays at least $1 in all
-                  outcomes.
+                  <strong>The trade:</strong> Buy YES at the lower threshold + buy NO at the
+                  higher threshold. Total cost = ask(lower) + (1 − bid(higher)). Since one of
+                  the two legs must win (X is either above the higher bar, between the bars, or
+                  below the lower bar), you always collect at least $1 per contract.
                 </p>
                 <p>
-                  <strong>Outcomes:</strong> If X≥b: YES_a pays $1, NO_b pays $0. If a≤X&lt;b:
-                  both pay $1 ($2 total). If X&lt;a: YES_a pays $0, NO_b pays $1. Minimum is
-                  always $1 per pair.
+                  <strong>Profit per contract:</strong> $1 − entry cost = gross edge. If X lands
+                  between the two levels, both legs win and you collect $2 instead (middle-band
+                  bonus shown as "X% both").
                 </p>
                 <p>
                   <strong>Fees:</strong> Kalshi charges{" "}
-                  {fmtPct(config?.fee_rate ?? 0.07)} of gross winnings. Worst case: one leg
-                  wins $1, fee = {fmtCents(config?.fee_rate ?? 0.07)}.
-                  Net edge = gross_edge − {fmtCents(config?.fee_rate ?? 0.07)}.
+                  {fmtPct(config?.fee_rate ?? 0.07)} of winnings per leg. Worst case (one leg
+                  wins): net edge = gross edge − {fmtCents(config?.fee_rate ?? 0.07)}.
                 </p>
                 <p>
                   <strong>Sizing:</strong> Capped at {config?.max_size ?? 10} contracts.
-                  Available liquidity is estimated from open interest.
+                  Depth shown as actual orderbook qty at the target bid/ask prices.
                 </p>
               </CardContent>
             </Card>
