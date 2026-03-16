@@ -356,12 +356,15 @@ class KalshiClient:
                     total_pages += 1
                     for m in page:
                         t = m.get("ticker", "")
-                        if t and t not in seen:
-                            seen.add(t)
-                            all_markets.append(m)
-                            # Only count non-parlay markets toward the cap
-                            if not any(t.startswith(p) for p in _SKIP_PREFIXES):
-                                general_count += 1
+                        if not t or t in seen:
+                            continue
+                        seen.add(t)
+                        # Skip parlay markets entirely — ~80k entries, useless for arb.
+                        # Still tracked in `seen` to avoid duplicates in step 2.
+                        if any(t.startswith(p) for p in _SKIP_PREFIXES):
+                            continue
+                        all_markets.append(m)
+                        general_count += 1
                     # Only stop when the API says there are no more pages (no cursor).
                     # Do NOT stop on len(page) < 200 — Kalshi can return partial pages
                     # mid-pagination without signalling end-of-results via empty cursor.
