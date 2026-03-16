@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -482,6 +483,25 @@ async def _refresh_markets() -> None:
         int_groups = group_integer_threshold_markets(markets)
         bucket_groups = group_bucket_markets(markets)
         _state["groups_found"] = len(groups) + len(int_groups) + len(bucket_groups)
+
+        # Diagnostic: show which series are covered and which big series are missed
+        covered = sorted({ev.split("-")[0] for ev in groups})
+        print(f"[Markets] T-groups={len(groups)} covering series: {covered}")
+        # Show sample tickers from fetched markets that have NO threshold pattern (might be missing ladders)
+        _T_PAT = re.compile(r"-T[\d.]+$", re.IGNORECASE)
+        non_threshold_series = {}
+        for m in markets:
+            t = m.get("ticker", "")
+            if not _T_PAT.search(t):
+                s = t.split("-")[0].upper()
+                non_threshold_series[s] = non_threshold_series.get(s, 0) + 1
+        # Print series with many markets (potential missed ladders)
+        big_missed = sorted(
+            [(cnt, s) for s, cnt in non_threshold_series.items() if cnt >= 5],
+            reverse=True
+        )[:20]
+        if big_missed:
+            print(f"[Markets] Non-threshold series with 5+ markets (potential missed ladders): {big_missed}")
 
         # Only cache the ~700 threshold/bucket markets; drop the other 59k to save memory
         relevant = (

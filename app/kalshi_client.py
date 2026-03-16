@@ -348,7 +348,7 @@ class KalshiClient:
                 cursor: Optional[str] = None
                 general_count = 0
                 total_pages = 0
-                while total_pages < 300:  # no general cap — fetch everything (up to 60k)
+                while total_pages < 500:  # hard safety cap
                     params: Dict[str, Any] = {"status": status, "limit": 200}
                     if cursor:
                         params["cursor"] = cursor
@@ -362,8 +362,12 @@ class KalshiClient:
                             # Only count non-parlay markets toward the cap
                             if not any(t.startswith(p) for p in _SKIP_PREFIXES):
                                 general_count += 1
-                    if not cursor or len(page) < 200:
+                    # Only stop when the API says there are no more pages (no cursor).
+                    # Do NOT stop on len(page) < 200 — Kalshi can return partial pages
+                    # mid-pagination without signalling end-of-results via empty cursor.
+                    if not cursor:
                         break
+                print(f"[Markets] General sweep: {total_pages} pages, {general_count} non-parlay markets")
 
                 # 2. Also do full coverage of structural-analysis series (complete strike chains)
                 import asyncio as _asyncio
