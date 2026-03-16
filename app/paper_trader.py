@@ -16,7 +16,7 @@ import dataclasses
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 
@@ -89,11 +89,14 @@ def _load_bucket_position(d: dict) -> BucketPosition:
 
 
 def _load_single_leg_position(d: dict) -> SingleLegPosition:
+    entry_price = d["entry_price"]
     return SingleLegPosition(
         id=d["id"], signal_id=d["signal_id"], series=d["series"],
         expiry_dt=datetime.fromisoformat(d["expiry_dt"]),
         ticker=d["ticker"], threshold=d["threshold"], adj_ticker=d["adj_ticker"],
-        size=d["size"], entry_price=d["entry_price"], target_bid=d["target_bid"],
+        size=d["size"], entry_price=entry_price,
+        entry_bid=d.get("entry_bid", entry_price * 0.5),  # old positions: use half of ask as proxy
+        target_bid=d["target_bid"],
         entry_time=datetime.fromisoformat(d["entry_time"]),
         status=d.get("status", "open"), strategy=d.get("strategy", "mispriced_leg"),
         current_bid=d.get("current_bid", 0.0),
@@ -140,6 +143,7 @@ class PaperTrader:
         self._single_open: Dict[str, SingleLegPosition] = {}   # pos_id → pos
         self._single_closed: List[SingleLegPosition] = []
         self._single_positioned: Dict[str, str] = {}           # signal_id (ticker) → pos_id
+        self._single_cooldown: Dict[str, datetime] = {}        # ticker → cooldown_until (after stop-loss)
 
     # ── Read-only properties ──────────────────────────────────────────────────
 
@@ -205,6 +209,16 @@ class PaperTrader:
         return (signal_id in self._positioned or
                 signal_id in self._bucket_positioned or
                 signal_id in self._single_positioned)
+
+    def is_single_leg_cooling_off(self, ticker: str) -> bool:
+        """Return True if this ticker is in stop-loss cooldown (blocked from re-entry)."""
+        until = self._single_cooldown.get(ticker)
+        if until is None:
+            return False
+        if datetime.now(timezone.utc) >= until:
+            del self._single_cooldown[ticker]
+            return False
+        return True
 
     # ── Entry ─────────────────────────────────────────────────────────────────
 
@@ -519,6 +533,8 @@ class PaperTrader:
         """Buy YES on the single mispriced market at current ask."""
         if sig.id in self._single_positioned:
             return None
+        if self.is_single_leg_cooling_off(sig.id):
+            return None
         size = min(sig.market.open_interest if sig.market.open_interest > 0 else self.max_size,
                    self.max_size)
         if size <= 0:
@@ -537,6 +553,7 @@ class PaperTrader:
             adj_ticker=sig.adj_higher.ticker,
             size=size,
             entry_price=sig.market.yes_ask,
+            entry_bid=sig.market.yes_bid,
             target_bid=sig.target_bid,
             entry_time=now,
             current_bid=sig.market.yes_bid,
@@ -586,8 +603,10 @@ class PaperTrader:
                       f"bid={pos.current_bid:.2f} PnL=${pos.realized_pnl:.2f}")
                 continue
 
-            # Stop-loss: cut when bid drops to 50% of entry price
-            stop_loss = pos.entry_price * 0.50
+            # Stop-loss: cut when bid drops to 50% of entry_bid (the bid at entry time).
+            # Using entry_bid (not entry_price/ask) prevents immediate trigger from wide
+            # bid-ask spreads — we only stop out if the market has genuinely moved against us.
+            stop_loss = pos.entry_bid * 0.50
             if pos.current_bid <= stop_loss:
                 loss = pos.current_bid - pos.entry_price
                 pos.realized_pnl = round(loss * pos.size, 4)
@@ -599,10 +618,13 @@ class PaperTrader:
                 self._single_open.pop(pos.id)
                 self._single_closed.append(pos)
                 self._single_positioned.pop(pos.signal_id, None)
+                # Cooldown: block re-entry for 2 hours to prevent feedback loop
+                self._single_cooldown[pos.signal_id] = now + timedelta(hours=2)
                 auto_closed.append(pos.id)
                 print(f"[PaperTrader] STOP-LOSS SINGLE-LEG {pos.id}: "
-                      f"bid={pos.current_bid:.2f} entry={pos.entry_price:.2f} "
-                      f"PnL=${pos.realized_pnl:.2f}")
+                      f"bid={pos.current_bid:.2f} entry_bid={pos.entry_bid:.2f} "
+                      f"entry_ask={pos.entry_price:.2f} PnL=${pos.realized_pnl:.2f} "
+                      f"(cooldown 2h)")
                 continue
 
             # Expire
@@ -731,6 +753,7 @@ class PaperTrader:
             "single_open": {k: dataclasses.asdict(v) for k, v in self._single_open.items()},
             "single_closed": [dataclasses.asdict(v) for v in self._single_closed],
             "single_positioned": dict(self._single_positioned),
+            "single_cooldown": {k: v.isoformat() for k, v in self._single_cooldown.items()},
         }
         tmp = path + ".tmp"
         parent = os.path.dirname(tmp)
@@ -764,6 +787,11 @@ class PaperTrader:
             for v in state.get("single_closed", []):
                 self._single_closed.append(_load_single_leg_position(v))
             self._single_positioned.update(state.get("single_positioned", {}))
+            now = datetime.now(timezone.utc)
+            for ticker, until_str in state.get("single_cooldown", {}).items():
+                until = datetime.fromisoformat(until_str)
+                if until > now:  # only load unexpired cooldowns
+                    self._single_cooldown[ticker] = until
             print(
                 f"[PaperTrader] Loaded state: {len(self._open)} open, "
                 f"{len(self._closed)} closed, {len(self._trades)} trades, "
@@ -784,5 +812,6 @@ class PaperTrader:
         self._single_open.clear()
         self._single_closed.clear()
         self._single_positioned.clear()
+        self._single_cooldown.clear()
         self._bucket_positioned.clear()
         self.save()

@@ -189,8 +189,10 @@ export interface InvertedLegSignal {
   adj_threshold: number;
   adj_title?: string;       // adjacent market label
   ask: number;              // current ask of cheap market (0-1)
+  bid: number;              // current bid of cheap market (0-1)
   adj_ask: number;          // adjacent higher's ask (0-1) — fair-value reference
-  inversion: number;        // adj_ask - ask (how mispriced)
+  adj_bid: number;          // adjacent higher's bid (0-1)
+  inversion: number;        // mid(adj) - mid(market) — mid-price inversion
   target_bid: number;       // auto-exit when bid reaches this
   detected_at: string;
   event_ticker?: string;

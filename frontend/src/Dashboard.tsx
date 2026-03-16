@@ -454,18 +454,18 @@ function InvertedLegRow({ sig }: { sig: InvertedLegSignal }) {
               </a>
             )}
           </div>
-          {/* Cheap leg vs reference */}
+          {/* Cheap leg vs reference — show bid/ask to expose spread */}
           <div className="mt-1 flex items-center gap-2 font-mono text-[10px]">
             <span className="bg-red-50 border border-red-200 text-red-700 rounded px-1.5 py-0.5">
-              {sig.title || fmtThreshold(sig.threshold)} ask {fmtCents(sig.ask)}
+              {sig.title || fmtThreshold(sig.threshold)} {fmtCents(sig.bid ?? 0)}/{fmtCents(sig.ask)}
             </span>
             <span className="text-slate-300">vs</span>
             <span className="bg-slate-50 border border-slate-200 text-slate-600 rounded px-1.5 py-0.5">
-              {sig.adj_title || fmtThreshold(sig.adj_threshold)} ask {fmtCents(sig.adj_ask)}
+              {sig.adj_title || fmtThreshold(sig.adj_threshold)} {fmtCents(sig.adj_bid ?? 0)}/{fmtCents(sig.adj_ask)}
             </span>
           </div>
           <div className="mt-0.5 text-[10px] text-orange-600 font-semibold">
-            Inversion: {fmtCents(sig.inversion)} · target bid: {fmtCents(sig.target_bid)}
+            Mid inversion: {fmtCents(sig.inversion)} · target bid: {fmtCents(sig.target_bid)}
           </div>
           <div className="mt-0.5 text-[10px] text-slate-400">
             Buy {sig.ticker} YES @ {fmtCents(sig.ask)}, exit ≥ {fmtCents(sig.target_bid)}

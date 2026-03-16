@@ -267,7 +267,7 @@ class SingleLegSignal:
     detected_at: datetime
 
     def to_dict(self) -> dict:
-        live_inv = round(self.adj_higher.yes_ask - self.market.yes_ask, 4)
+        live_inv = round(self.adj_higher.mid() - self.market.mid(), 4)
         return {
             "id": self.id,
             "series": self.series,
@@ -279,7 +279,9 @@ class SingleLegSignal:
             "adj_threshold": self.adj_higher.threshold,
             "adj_title": self.adj_higher.title,
             "ask": round(self.market.yes_ask, 4),
+            "bid": round(self.market.yes_bid, 4),
             "adj_ask": round(self.adj_higher.yes_ask, 4),
+            "adj_bid": round(self.adj_higher.yes_bid, 4),
             "inversion": live_inv,
             "target_bid": round(self.target_bid, 4),
             "detected_at": self.detected_at.isoformat(),
@@ -299,6 +301,7 @@ class SingleLegPosition:
     adj_ticker: str         # adjacent reference market
     size: int
     entry_price: float      # yes_ask at entry (0-1)
+    entry_bid: float        # yes_bid at entry — stop-loss basis (avoids spread noise)
     target_bid: float       # auto-exit when bid reaches this
     entry_time: datetime
     status: str = "open"    # "open" | "closed"
@@ -321,6 +324,7 @@ class SingleLegPosition:
             "adj_ticker": self.adj_ticker,
             "size": self.size,
             "entry_price": round(self.entry_price, 4),
+            "entry_bid": round(self.entry_bid, 4),
             "target_bid": round(self.target_bid, 4),
             "entry_time": self.entry_time.isoformat(),
             "status": self.status,

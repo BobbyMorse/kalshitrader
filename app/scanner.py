@@ -444,15 +444,18 @@ def find_inverted_legs(
             # OI filter intentionally removed: bulk REST API omits open_interest (returns 0),
             # which would block all signals. Spread + bid filters above are sufficient quality gates.
 
-            # Inversion: ask(lower) should be >= ask(higher); when inverted, lower is mispriced cheap
-            inversion = higher.yes_ask - lower.yes_ask  # positive = lower is cheaper = inverted
+            # Inversion: mid(lower) should be >= mid(higher) (lower threshold = more likely).
+            # Using mid prices instead of ask prices avoids false positives from different
+            # bid-ask spreads across illiquid markets (wide-spread markets have inflated asks).
+            # A mid-level inversion is a genuine pricing anomaly, not just a liquidity artifact.
+            inversion = higher.mid() - lower.mid()  # positive = lower is cheaper = inverted
             if inversion < min_inversion:
                 n_not_inverted += 1
                 continue
 
             seen.add(lower.ticker)
-            # Target: exit when lower's bid climbs to near the adjacent higher's current ask
-            target_bid = round(higher.yes_ask - 0.05, 4)
+            # Target: exit when lower's bid climbs to near the adjacent higher's current mid
+            target_bid = round(higher.mid() - 0.03, 4)
 
             signals.append(SingleLegSignal(
                 id=lower.ticker,
