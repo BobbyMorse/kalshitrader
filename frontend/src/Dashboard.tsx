@@ -157,10 +157,11 @@ function SignalRow({
     }
   }
 
+  const expEdge = sig.expected_edge ?? sig.net_edge;
   const edgeColor =
-    sig.gross_edge >= 0.15
+    expEdge >= 0.15
       ? "text-emerald-700 font-bold"
-      : sig.gross_edge >= 0.10
+      : expEdge >= 0.05
       ? "text-emerald-600 font-semibold"
       : "text-amber-600";
 
@@ -209,9 +210,14 @@ function SignalRow({
 
       {/* Edge */}
       <div>
-        <div className="text-[10px] text-slate-400 uppercase tracking-wide">Gross edge</div>
-        <div className={`font-mono text-base ${edgeColor}`}>{fmtCents(sig.gross_edge)}</div>
-        <div className="text-[10px] text-slate-400">net {fmtCents(sig.net_edge)}</div>
+        <div className="text-[10px] text-slate-400 uppercase tracking-wide">Exp. edge</div>
+        <div className={`font-mono text-base ${edgeColor}`}>{fmtCents(expEdge)}</div>
+        <div className="text-[10px] text-slate-400">
+          gross {fmtCents(sig.gross_edge)}
+          {sig.middle_prob > 0.01 && (
+            <span className="ml-1 text-sky-500">· {Math.round(sig.middle_prob * 100)}% both</span>
+          )}
+        </div>
       </div>
 
       {/* Entry cost + size */}
@@ -597,11 +603,12 @@ function PositionRow({ pos }: { pos: Position }) {
       {/* PnL */}
       <div>
         <div className="text-[10px] text-slate-400 uppercase tracking-wide">
-          {isOpen ? "Mid P&L" : "Realized"}
+          {isOpen ? "Exit P&L" : "Realized"}
         </div>
         <div className={`font-mono text-sm font-semibold ${pnlColor(pnl)}`}>
           {fmtPnl(pnl)}
         </div>
+        {isOpen && <div className="text-[10px] text-slate-400">if flattened now</div>}
         {pos.fees_paid > 0 && (
           <div className="text-[10px] text-slate-400">fees ${pos.fees_paid.toFixed(2)}</div>
         )}

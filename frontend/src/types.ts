@@ -40,7 +40,9 @@ export interface ViolationSignal {
   lower_ask: number;        // 0-1
   higher_bid: number;       // 0-1
   gross_edge: number;       // bid(higher) - ask(lower)
-  net_edge: number;         // gross_edge - fee_rate
+  net_edge: number;         // gross_edge - fee_rate (worst case: one leg wins)
+  middle_prob: number;      // P(lower <= X < higher) — both legs win
+  expected_edge: number;    // net_edge + middle_prob * (1 - fee) — true EV
   entry_cost: number;       // ask(lower) + (1 - bid(higher))
   avail_size: number;
   detected_at: string;

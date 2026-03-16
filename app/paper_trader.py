@@ -224,10 +224,10 @@ class PaperTrader:
             net_edge=signal.net_edge,
             status="open",
             strategy=strategy,
-            lower_mid=signal.lower.mid(),
-            higher_no_mid=1.0 - signal.higher.mid(),
+            lower_mid=signal.lower.yes_bid,               # sell YES at bid
+            higher_no_mid=1.0 - signal.higher.yes_ask,    # exit NO = buy YES at ask
         )
-        # Initial unrealized mark
+        # Initial unrealized mark (exit P&L at entry prices)
         pos.unrealized_pnl = (pos.lower_mid + pos.higher_no_mid - pos.entry_cost) * size
 
         self._open[pos_id] = pos
@@ -290,9 +290,11 @@ class PaperTrader:
             higher_bid = _mkt_bid(higher_m)
             higher_ask = _mkt_ask(higher_m)
 
-            pos.lower_mid = (lower_bid + lower_ask) / 2
-            pos.higher_no_mid = 1.0 - (higher_bid + higher_ask) / 2
-            # Use mid-to-mid for unrealized (matches "Current value" display)
+            # Exit P&L: use actual liquidation prices, not mids.
+            # Sell YES at lower leg's bid; exit NO at lower leg by buying YES at ask
+            # → NO worth = 1 - yes_ask(higher). This is what a flatten would actually net.
+            pos.lower_mid = lower_bid              # sell YES at bid
+            pos.higher_no_mid = 1.0 - higher_ask  # exit NO = buy YES at ask
             pos.unrealized_pnl = (pos.lower_mid + pos.higher_no_mid - pos.entry_cost) * pos.size
 
             # One-leg exposure warnings

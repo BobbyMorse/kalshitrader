@@ -42,15 +42,24 @@ class ViolationSignal:
     lower: ThresholdMarket
     higher: ThresholdMarket
     gross_edge: float               # bid(higher) - ask(lower); guaranteed min profit/contract
-    net_edge: float                 # gross_edge - fee_rate (worst-case net after Kalshi fee)
+    net_edge: float                 # gross_edge - fee_rate (worst-case: one leg wins)
     entry_cost: float               # ask(lower) + (1 - bid(higher)); cost per contract pair
     avail_size: int
     detected_at: datetime
+    # Middle-band pricing: P(lower <= X < higher) ≈ mid(lower) - mid(higher)
+    # When both legs resolve YES, payout = $2 instead of $1.
+    middle_prob: float = 0.0        # market-implied P(both legs win)
+    expected_edge: float = 0.0      # net_edge + middle_prob * (1 - fee) — true EV per contract
 
     def to_dict(self) -> dict:
         # Recompute from live prices (ThresholdMarket objects are updated by ticks)
         live_edge = round(self.higher.yes_bid - self.lower.yes_ask, 4)
-        live_net = round(live_edge - (self.gross_edge - self.net_edge), 4)  # preserve fee
+        fee = self.gross_edge - self.net_edge  # preserve original fee rate
+        live_net = round(live_edge - fee, 4)
+        live_lower_mid = (self.lower.yes_bid + self.lower.yes_ask) / 2
+        live_higher_mid = (self.higher.yes_bid + self.higher.yes_ask) / 2
+        live_middle_prob = round(max(0.0, live_lower_mid - live_higher_mid), 4)
+        live_expected_edge = round(live_net + live_middle_prob * (1.0 - fee), 4)
         return {
             "id": self.id,
             "series": self.series,
@@ -63,6 +72,8 @@ class ViolationSignal:
             "higher_bid": round(self.higher.yes_bid, 4),
             "gross_edge": live_edge,
             "net_edge": live_net,
+            "middle_prob": live_middle_prob,
+            "expected_edge": live_expected_edge,
             "entry_cost": round(self.lower.yes_ask + (1.0 - self.higher.yes_bid), 4),
             "avail_size": self.avail_size,
             "detected_at": self.detected_at.isoformat(),

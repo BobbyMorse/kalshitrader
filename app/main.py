@@ -66,7 +66,7 @@ _trader.load()
 # All mutable state lives in dicts/lists so mutations never need `global`.
 
 _config: Dict[str, Any] = {
-    "min_gross_edge": 0.08,   # must exceed fee_rate (0.07) to guarantee net profit
+    "min_gross_edge": 0.01,   # minimum gross_edge; expected_edge filter allows middle-band trades
     "max_size": 500,
     "fee_rate": 0.07,
     "refresh_interval": 300,   # seconds between full REST refreshes
@@ -244,13 +244,14 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                     for v in violations:
                         print(
                             f"[Feed] VIOLATION {v.id}: "
-                            f"edge={v.gross_edge:.3f} net={v.net_edge:.3f}"
+                            f"edge={v.gross_edge:.3f} net={v.net_edge:.3f} "
+                            f"exp={v.expected_edge:.3f} mid_p={v.middle_prob:.2f}"
                         )
                         if v.id in sig_index:
                             _signals[sig_index[v.id]] = v
                         else:
                             _signals.append(v)
-                    _signals.sort(key=lambda x: x.gross_edge, reverse=True)
+                    _signals.sort(key=lambda x: x.expected_edge, reverse=True)
                     if _config["auto_trade"] and _config["paper_trading"]:
                         for v in violations:
                             if not _trader.is_positioned(v.id):
@@ -275,10 +276,7 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                                 f"ask={sig.market.yes_ask:.2f} adj={sig.adj_higher.yes_ask:.2f} "
                                 f"inv={sig.inversion:.2f}"
                             )
-                    if _config["auto_trade"] and _config["paper_trading"]:
-                        for sig in inverted:
-                            if not _trader.is_positioned(sig.id):
-                                _trader.execute_single_leg(sig)
+                    # Single-leg inverted signals are display-only; no auto-trading.
                     broadcast_needed = True
 
     # ── Bucket sum arb check ──────────────────────────────────────────────────
@@ -550,10 +548,7 @@ async def _refresh_markets() -> None:
                 print(f"  [INVERT] {sig.id}: ask={sig.market.yes_ask:.2f} "
                       f"adj_ask={sig.adj_higher.yes_ask:.2f} inv={sig.inversion:.2f}")
 
-        if _config["auto_trade"] and _config["paper_trading"]:
-            for sig in inverted:
-                if not _trader.is_positioned(sig.id):
-                    _trader.execute_single_leg(sig)
+        # Single-leg inverted signals are display-only; no auto-trading.
 
         print(
             f"[Refresh] {_state['markets_fetched']} markets | "

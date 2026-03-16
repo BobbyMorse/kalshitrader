@@ -217,15 +217,34 @@ def find_violations(
                 continue
             if higher.open_interest > 0 and higher.open_interest * (1.0 - higher.yes_bid) < 10.0:
                 continue
+            # Fake-liquidity guard: if the higher leg has a huge internal spread,
+            # its yes_bid is a thin top-of-book outlier (e.g. 10 contracts at 34¢ while
+            # the real ask is at 98¢). We'd only get a few contracts at the advertised
+            # gross_edge before the price collapses. Require a tight book on both legs.
+            higher_spread = higher.yes_ask - higher.yes_bid
+            lower_spread = lower.yes_ask - lower.yes_bid
+            if higher_spread > 0.40 or lower_spread > 0.40:
+                continue
             # P(X >= lower) >= P(X >= higher)  must hold
             # Violation: bid(higher) > ask(lower)
             gross_edge = higher.yes_bid - lower.yes_ask
             if gross_edge < min_gross_edge:
                 continue
 
-            net_edge = gross_edge - fee_rate   # worst case: one leg wins
-            if not allow_negative_edge and net_edge <= 0:
-                continue  # fee would eat all profit — hard reject
+            net_edge = gross_edge - fee_rate   # worst-case: one leg wins, pay fee once
+
+            # ── Middle-band probability ────────────────────────────────────────
+            # P(lower <= X < higher) ≈ mid(lower) - mid(higher)
+            # When both legs win, payout = $2 instead of $1 → bonus per contract.
+            lower_mid = (lower.yes_bid + lower.yes_ask) / 2
+            higher_mid = (higher.yes_bid + higher.yes_ask) / 2
+            middle_prob = max(0.0, lower_mid - higher_mid)
+            # EV = worst-case net + middle-band bonus
+            # (one leg: payout $1-fee; both legs: payout $2-2*fee = (1-fee) extra)
+            expected_edge = net_edge + middle_prob * (1.0 - fee_rate)
+
+            if not allow_negative_edge and expected_edge <= 0:
+                continue  # fee eats all profit even with middle-band bonus
 
             entry_cost = lower.yes_ask + (1.0 - higher.yes_bid)
 
@@ -248,6 +267,8 @@ def find_violations(
                 entry_cost=entry_cost,
                 avail_size=avail,
                 detected_at=now,
+                middle_prob=middle_prob,
+                expected_edge=expected_edge,
             ))
 
     violations.sort(key=lambda v: v.gross_edge, reverse=True)
