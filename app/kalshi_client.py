@@ -356,7 +356,10 @@ class KalshiClient:
             async with httpx.AsyncClient(timeout=30) as client:
                 # 1. Paginate through ALL open markets (gets sports, politics, news, etc.)
                 # Skip KXMVE parlays — don't count them toward the page limit.
-                _SKIP_PREFIXES = ("KXMVECROSSCATEGORY", "KXMVESPORTSMULTIGAMEEXTENDED")
+                # Skip ALL KXMVE parlay/bracket markets — they come in many flavors
+                # (KXMVECROSSCATEGORY, KXMVESPORTSMULTIGAMEEXTENDED, KXMVECBCHAMPIONSHIP, etc.)
+                # and collectively account for 10k+ markets with zero arb relevance.
+                _SKIP_PREFIXES = ("KXMVE",)
                 cursor: Optional[str] = None
                 general_count = 0
                 total_pages = 0
