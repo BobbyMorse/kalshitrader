@@ -65,15 +65,44 @@ _trader.load()
 # ── Module-level state ────────────────────────────────────────────────────────
 # All mutable state lives in dicts/lists so mutations never need `global`.
 
+_STATE_FILE = os.environ.get("STATE_FILE", os.path.join(os.path.dirname(__file__), "trader_state.json"))
+_CONFIG_FILE = _STATE_FILE.replace("trader_state.json", "trader_config.json")
+
 _config: Dict[str, Any] = {
-    "min_gross_edge": 0.01,   # minimum gross_edge; expected_edge filter allows middle-band trades
+    "min_gross_edge": 0.07,   # minimum gross_edge for actual violations
     "max_size": 500,
     "fee_rate": 0.07,
     "refresh_interval": 300,   # seconds between full REST refreshes
     "auto_trade": True,
     "paper_trading": True,
-    "auto_trade_inverted": False,  # auto-execute single-leg inverted signals (directional risk)
+    "auto_trade_inverted": False,
 }
+
+def _load_config() -> None:
+    """Load persisted config, overriding defaults."""
+    if not os.path.exists(_CONFIG_FILE):
+        return
+    try:
+        with open(_CONFIG_FILE) as f:
+            saved = json.load(f)
+        for k, v in saved.items():
+            if k in _config:
+                _config[k] = v
+        print(f"[Config] Loaded from {_CONFIG_FILE}: {saved}")
+    except Exception as e:
+        print(f"[Config] Failed to load {_CONFIG_FILE}: {e}")
+
+def _save_config() -> None:
+    """Atomically persist current config."""
+    try:
+        tmp = _CONFIG_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(_config, f, indent=2)
+        os.replace(tmp, _CONFIG_FILE)
+    except Exception as e:
+        print(f"[Config] Failed to save {_CONFIG_FILE}: {e}")
+
+_load_config()
 _trader.max_size = _config["max_size"]
 
 _state: Dict[str, Any] = {
@@ -316,7 +345,7 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                 _min_edge = _config["min_gross_edge"]
                 all_close = find_violations(
                     {event_ticker: group_markets},
-                    min_gross_edge=-1.0,
+                    min_gross_edge=_min_edge - 0.05,
                     max_size=_config["max_size"],
                     fee_rate=_config["fee_rate"],
                     allow_negative_edge=True,
@@ -557,12 +586,11 @@ async def _refresh_markets() -> None:
             fee_rate=_fee,
             allow_negative_edge=True,  # paper: trade any genuine violation
         )
-        # Near-miss scan: adjacent pairs only, no floor — show all with valid prices.
-        # Sorted by gross_edge desc so closest-to-violation pairs appear first.
+        # Near-miss scan: adjacent pairs within 5¢ of the violation threshold.
         # require_liquidity=False: display-only; OI=0 from bulk API would block everything.
         all_close = find_violations(
             all_groups,
-            min_gross_edge=-1.0,
+            min_gross_edge=_min_edge - 0.05,
             max_size=_config["max_size"],
             fee_rate=_fee,
             allow_negative_edge=True,
@@ -604,7 +632,7 @@ async def _refresh_markets() -> None:
         )
         all_b_close = find_bucket_violations(
             bucket_groups,
-            min_gross_edge=-1.0,
+            min_gross_edge=_min_edge - 0.05,
             max_size=_config["max_size"],
             fee_rate=0,
             allow_negative_edge=True,
@@ -630,7 +658,7 @@ async def _refresh_markets() -> None:
             all_groups,
             max_size=_config["max_size"],
             fee_rate=_fee,
-            min_gross_edge=-1.0,  # no floor — show all, sorted closest-to-violation first
+            min_gross_edge=-0.05,  # within 5¢ of being a true non-adjacent arb
             top_n=30,
         )
         _structural_anomalies.clear()
@@ -826,6 +854,7 @@ async def _handle_ws_msg(msg: dict) -> None:
         for key, val in msg.get("config", {}).items():
             if key in _config:
                 _config[key] = val
+        _save_config()
         await _broadcast({"type": "config_update", "config": _config})
 
     elif t == "ping":
@@ -971,6 +1000,7 @@ async def update_config(cfg: ConfigUpdate) -> dict:
         _config["auto_trade"] = cfg.auto_trade
     if cfg.auto_trade_inverted is not None:
         _config["auto_trade_inverted"] = cfg.auto_trade_inverted
+    _save_config()
     await _broadcast({"type": "config_update", "config": _config})
     return _config
 

@@ -221,6 +221,13 @@ def find_violations(
                     continue
                 if lower.open_interest < 20 or higher.open_interest < 20:
                     continue
+            else:
+                # For display-only (near-miss) scans: skip deep-OTM markets where
+                # both bid AND ask are below 10¢ (no meaningful price signal).
+                if lower.yes_bid < 0.10 and lower.yes_ask < 0.10:
+                    continue
+                if higher.yes_bid < 0.10 and higher.yes_ask < 0.10:
+                    continue
             # Fake-liquidity guard: if the higher leg has a huge internal spread,
             # its yes_bid is a thin top-of-book outlier (e.g. 10 contracts at 34¢ while
             # the real ask is at 98¢). We'd only get a few contracts at the advertised
@@ -252,8 +259,8 @@ def find_violations(
 
             entry_cost = lower.yes_ask + (1.0 - higher.yes_bid)
 
-            # Size: cap at open_interest (never inflate beyond what exists in market)
-            avail = min(lower.open_interest, higher.open_interest, max_size)
+            # Size: cap at open_interest; if OI=0 (not populated from REST bulk list), use max_size
+            avail = min(lower.open_interest or max_size, higher.open_interest or max_size, max_size)
 
             violations.append(ViolationSignal(
                 id=f"{lower.ticker}|{higher.ticker}",
@@ -343,7 +350,7 @@ def find_structural_anomalies(
                 net_edge = gross_edge - fee_rate
                 entry_cost = lower.yes_ask + (1.0 - higher.yes_bid)
 
-                avail = min(lower.open_interest, higher.open_interest, max_size)
+                avail = min(lower.open_interest or max_size, higher.open_interest or max_size, max_size)
 
                 anomalies.append(StructuralAnomaly(
                     id=f"{lower.ticker}|{higher.ticker}",
