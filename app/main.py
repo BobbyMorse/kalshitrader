@@ -704,10 +704,12 @@ async def _refresh_markets() -> None:
 
 
 async def _refresh_loop() -> None:
+    # First refresh already ran at startup; sleep before the next one
     while _state["running"]:
-        await _refresh_markets()
         interval = int(_config.get("refresh_interval", 300))
         await asyncio.sleep(interval)
+        if _state["running"]:
+            await _refresh_markets()
 
 
 # ── Feed lifecycle ────────────────────────────────────────────────────────────
