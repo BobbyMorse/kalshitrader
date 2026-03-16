@@ -212,10 +212,14 @@ def find_violations(
             # Skip markets whose prices haven't been updated yet
             if lower.yes_ask == 0.0 or higher.yes_bid == 0.0:
                 continue
-            # Minimum dollar liquidity: $10 in open interest on each leg
-            if lower.open_interest > 0 and lower.open_interest * lower.yes_ask < 10.0:
+            # Minimum liquidity: require ≥$50 of open interest on each leg AND
+            # ≥20 contracts. OI=0 means no active market → also blocked (0 * price = 0 < 50).
+            # Note: open_interest > 0 guard intentionally removed so OI=0 is rejected.
+            if lower.open_interest * lower.yes_ask < 50.0:
                 continue
-            if higher.open_interest > 0 and higher.open_interest * (1.0 - higher.yes_bid) < 10.0:
+            if higher.open_interest * (1.0 - higher.yes_bid) < 50.0:
+                continue
+            if lower.open_interest < 20 or higher.open_interest < 20:
                 continue
             # Fake-liquidity guard: if the higher leg has a huge internal spread,
             # its yes_bid is a thin top-of-book outlier (e.g. 10 contracts at 34¢ while
@@ -248,13 +252,8 @@ def find_violations(
 
             entry_cost = lower.yes_ask + (1.0 - higher.yes_bid)
 
-            # Size proxy: use open_interest if available, else max_size
-            avail = min(
-                lower.open_interest if lower.open_interest > 0 else max_size,
-                higher.open_interest if higher.open_interest > 0 else max_size,
-                max_size,
-            )
-            avail = max(avail, 1)
+            # Size: cap at open_interest (never inflate beyond what exists in market)
+            avail = min(lower.open_interest, higher.open_interest, max_size)
 
             violations.append(ViolationSignal(
                 id=f"{lower.ticker}|{higher.ticker}",
@@ -323,10 +322,12 @@ def find_structural_anomalies(
                 if lower.yes_ask >= 0.97:
                     continue
 
-                # Minimum dollar liquidity: $10 on each leg
-                if lower.open_interest > 0 and lower.open_interest * lower.yes_ask < 10.0:
+                # Minimum liquidity (same rules as threshold violations)
+                if lower.open_interest * lower.yes_ask < 50.0:
                     continue
-                if higher.open_interest > 0 and higher.open_interest * (1.0 - higher.yes_bid) < 10.0:
+                if higher.open_interest * (1.0 - higher.yes_bid) < 50.0:
+                    continue
+                if lower.open_interest < 20 or higher.open_interest < 20:
                     continue
 
                 gross_edge = higher.yes_bid - lower.yes_ask
@@ -347,12 +348,7 @@ def find_structural_anomalies(
                 net_edge = gross_edge - fee_rate
                 entry_cost = lower.yes_ask + (1.0 - higher.yes_bid)
 
-                avail = min(
-                    lower.open_interest if lower.open_interest > 0 else max_size,
-                    higher.open_interest if higher.open_interest > 0 else max_size,
-                    max_size,
-                )
-                avail = max(avail, 1)
+                avail = min(lower.open_interest, higher.open_interest, max_size)
 
                 anomalies.append(StructuralAnomaly(
                     id=f"{lower.ticker}|{higher.ticker}",
@@ -418,8 +414,11 @@ def find_inverted_legs(
             spread = lower.yes_ask - lower.yes_bid
             if lower.yes_bid < 0.10 or spread > 0.40:
                 continue
-            # Minimum dollar liquidity: $10 in open interest
-            if lower.open_interest > 0 and lower.open_interest * lower.yes_ask < 10.0:
+            # Minimum dollar liquidity: $50 in open interest AND ≥20 contracts.
+            # Note: open_interest > 0 guard intentionally removed so OI=0 is rejected.
+            if lower.open_interest * lower.yes_ask < 50.0:
+                continue
+            if lower.open_interest < 20:
                 continue
 
             # Bid inversion check: buyers must ALSO confirm the lower market is underpriced.
@@ -541,10 +540,14 @@ def find_bucket_violations(
         if not allow_negative_edge and net_edge <= 0:
             continue
 
-        avail = min(
-            min(b.open_interest if b.open_interest > 0 else max_size for b in buckets),
-            max_size,
-        )
+        # Minimum liquidity per bucket: ≥$50 OI × ask and ≥20 contracts.
+        # OI=0 guard intentionally removed so OI=0 buckets are rejected.
+        if any(b.open_interest * b.yes_ask < 50.0 for b in buckets):
+            continue
+        if any(b.open_interest < 20 for b in buckets):
+            continue
+
+        avail = min(min(b.open_interest for b in buckets), max_size)
         avail = max(avail, 1)
 
         violations.append(BucketSumSignal(
