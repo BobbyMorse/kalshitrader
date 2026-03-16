@@ -420,13 +420,6 @@ def find_inverted_legs(
             # OI filter intentionally removed: bulk REST API omits open_interest (returns 0),
             # which would block all signals. Spread + bid filters above are sufficient quality gates.
 
-            # Bid inversion check: buyers must ALSO confirm the lower market is underpriced.
-            # Normally bid(lower) >= bid(higher) since lower threshold is more likely.
-            # If bid(lower) < bid(higher), the whole book (bids AND asks) is inverted → genuine.
-            # If bid(lower) >= bid(higher) but ask is inverted, the ask is a stale outlier (skip).
-            if lower.yes_bid >= higher.yes_bid:
-                continue
-
             # Inversion: ask(lower) should be >= ask(higher); when inverted, lower is mispriced cheap
             inversion = higher.yes_ask - lower.yes_ask  # positive = lower is cheaper = inverted
             if inversion < min_inversion:

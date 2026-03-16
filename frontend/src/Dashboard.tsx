@@ -571,6 +571,24 @@ function PositionRow({ pos }: { pos: Position }) {
           <span className="text-slate-300">—</span>
           <span className="font-mono">{fmtThreshold(pos.higher_threshold)}</span>
         </div>
+        <div className="mt-0.5 text-[10px] font-mono space-y-0.5">
+          <div className="flex items-center gap-1 text-slate-500">
+            <span className="bg-emerald-50 border border-emerald-200 text-emerald-700 rounded px-1">YES ≥{fmtThreshold(pos.lower_threshold)}</span>
+            <span className="text-slate-300">entry {fmtCents(pos.lower_entry)}</span>
+            <span className="text-slate-300">→</span>
+            <span className={pos.lower_mid >= pos.lower_entry ? "text-emerald-600" : "text-rose-500"}>
+              bid {fmtCents(pos.lower_mid)}
+            </span>
+          </div>
+          <div className="flex items-center gap-1 text-slate-500">
+            <span className="bg-rose-50 border border-rose-200 text-rose-700 rounded px-1">NO ≥{fmtThreshold(pos.higher_threshold)}</span>
+            <span className="text-slate-300">entry {fmtCents(pos.higher_entry)}</span>
+            <span className="text-slate-300">→</span>
+            <span className={pos.higher_no_mid >= pos.higher_entry ? "text-emerald-600" : "text-rose-500"}>
+              bid {fmtCents(pos.higher_no_mid)}
+            </span>
+          </div>
+        </div>
         <div className="text-[10px] text-slate-400">
           expires {expiryIn(pos.expiry)} · entered {timeSince(pos.entry_time)}
         </div>
