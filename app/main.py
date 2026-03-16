@@ -96,6 +96,9 @@ def _save_config() -> None:
     """Atomically persist current config."""
     try:
         tmp = _CONFIG_FILE + ".tmp"
+        parent = os.path.dirname(tmp)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         with open(tmp, "w") as f:
             json.dump(_config, f, indent=2)
         os.replace(tmp, _CONFIG_FILE)

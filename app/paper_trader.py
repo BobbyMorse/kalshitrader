@@ -714,6 +714,9 @@ class PaperTrader:
             "single_positioned": dict(self._single_positioned),
         }
         tmp = path + ".tmp"
+        parent = os.path.dirname(tmp)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         with open(tmp, "w") as f:
             json.dump(state, f, cls=_DTEncoder, indent=2)
         os.replace(tmp, path)
