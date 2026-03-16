@@ -24,6 +24,9 @@ primary_region = "iad"
   cpu_kind = "shared"
   cpus = 1
 
+[env]
+  STATE_FILE = "/data/trader_state.json"
+
 [mounts]
   source = "kalshi_data"
   destination = "/data"

@@ -24,6 +24,7 @@ from models import (BucketMarket, BucketSumSignal, SingleLegSignal,
                     StructuralAnomaly, ThresholdMarket, ViolationSignal)
 
 _T_RE = re.compile(r"-T([\d.]+)$", re.IGNORECASE)
+_BARE_FLOAT_RE = re.compile(r"-(\d+\.\d+)$")    # bare decimal: KXAAAGASM-26MAR31-4.50
 _B_RE = re.compile(r"-B([\d.]+)$", re.IGNORECASE)
 _N_RE = re.compile(r"-(\d+)$")            # dash + integer: KXNBASTL-GAMEID-PLAYER-1
 _TEAM_N_RE = re.compile(r"([A-Z]{2,5})(\d+)$")  # team+integer: KXNBA1HSPREAD-...-NYK7
@@ -56,6 +57,9 @@ KALSHI_FEE_RATE = 0.07  # 7% of gross winnings per resolved contract
 
 def _parse_threshold(ticker: str) -> Optional[float]:
     m = _T_RE.search(ticker)
+    if m:
+        return float(m.group(1))
+    m = _BARE_FLOAT_RE.search(ticker)
     return float(m.group(1)) if m else None
 
 
@@ -394,28 +398,34 @@ def find_inverted_legs(
     now = datetime.now(timezone.utc)
     min_ttl = timedelta(minutes=30)
 
+    n_pairs = n_no_price = n_expired = n_illiquid = n_not_inverted = 0
+
     for event_ticker, markets in groups.items():
         if len(markets) < 2:
             continue
         sorted_markets = sorted(markets, key=lambda x: x.threshold)
         if sorted_markets[0].expiry_dt - now < min_ttl:
+            n_expired += len(sorted_markets) - 1
             continue
 
         for i in range(len(sorted_markets) - 1):
             lower = sorted_markets[i]
             higher = sorted_markets[i + 1]
+            n_pairs += 1
 
             if lower.yes_ask <= 0 or higher.yes_ask <= 0:
+                n_no_price += 1
                 continue
             if lower.ticker in seen:
                 continue
 
-            # Liquidity filter: bid ≥ 10¢ and spread (ask - bid) ≤ 40¢ on BOTH markets.
+            # Liquidity filter: bid ≥ 3¢ and spread (ask - bid) ≤ 40¢ on BOTH markets.
             # Wide spread on either leg = thin/unreliable price (e.g. adj_higher at 93¢ ask / 7¢ bid
             # → 86¢ spread means the 93¢ ask is a lone outlier, not a real market price).
             spread = lower.yes_ask - lower.yes_bid
             adj_spread = higher.yes_ask - higher.yes_bid
-            if lower.yes_bid < 0.10 or spread > 0.40 or adj_spread > 0.40:
+            if lower.yes_bid < 0.03 or spread > 0.40 or adj_spread > 0.40:
+                n_illiquid += 1
                 continue
             # OI filter intentionally removed: bulk REST API omits open_interest (returns 0),
             # which would block all signals. Spread + bid filters above are sufficient quality gates.
@@ -423,6 +433,7 @@ def find_inverted_legs(
             # Inversion: ask(lower) should be >= ask(higher); when inverted, lower is mispriced cheap
             inversion = higher.yes_ask - lower.yes_ask  # positive = lower is cheaper = inverted
             if inversion < min_inversion:
+                n_not_inverted += 1
                 continue
 
             seen.add(lower.ticker)
@@ -440,6 +451,10 @@ def find_inverted_legs(
                 detected_at=now,
             ))
 
+    if n_pairs > 0:
+        print(f"[InvertedLegs] {n_pairs} pairs: {n_no_price} no-price, "
+              f"{n_expired} expired, {n_illiquid} illiquid, "
+              f"{n_not_inverted} not-inverted → {len(signals)} signals")
     signals.sort(key=lambda s: s.inversion, reverse=True)
     return signals[:top_n]
 

@@ -76,7 +76,8 @@ _config: Dict[str, Any] = {
     "refresh_interval": 300,   # seconds between full REST refreshes
     "auto_trade": True,
     "paper_trading": True,
-    "auto_trade_inverted": False,
+    "auto_trade_inverted": True,
+    "_v": 2,
 }
 
 def _load_config() -> None:
@@ -89,6 +90,11 @@ def _load_config() -> None:
         for k, v in saved.items():
             if k in _config:
                 _config[k] = v
+        # Migration v2: auto_trade_inverted was False by default; new default is True.
+        # If the saved config predates the v2 field, upgrade it.
+        if saved.get("_v", 1) < 2:
+            _config["auto_trade_inverted"] = True
+            _config["_v"] = 2
         print(f"[Config] Loaded from {_CONFIG_FILE}: {saved}")
     except Exception as e:
         print(f"[Config] Failed to load {_CONFIG_FILE}: {e}")
