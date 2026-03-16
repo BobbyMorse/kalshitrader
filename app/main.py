@@ -312,6 +312,33 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                                 _trader.execute(v, strategy="threshold_arb")
                     broadcast_needed = True
 
+                # ── Near-miss scan (real-time, same group, same throttle) ───────────
+                _min_edge = _config["min_gross_edge"]
+                all_close = find_violations(
+                    {event_ticker: group_markets},
+                    min_gross_edge=_min_edge - 0.15,
+                    max_size=_config["max_size"],
+                    fee_rate=_config["fee_rate"],
+                    allow_negative_edge=True,
+                    adjacent_only=True,
+                )
+                tick_near = [
+                    v for v in all_close
+                    if v.gross_edge < _min_edge
+                    and not (v.lower.yes_ask >= 0.99 and v.higher.yes_bid >= 0.98)
+                ]
+                group_ticker_set = set(group_tickers)
+                _near_misses[:] = [
+                    v for v in _near_misses
+                    if v.lower.ticker not in group_ticker_set
+                    and v.higher.ticker not in group_ticker_set
+                ]
+                _near_misses.extend(tick_near)
+                _near_misses.sort(key=lambda x: x.gross_edge, reverse=True)
+                del _near_misses[30:]
+                if tick_near:
+                    broadcast_needed = True
+
                 # ── Inverted-leg check on every tick (real-time mispricing detection) ──
                 inverted = find_inverted_legs(
                     {event_ticker: group_markets},
