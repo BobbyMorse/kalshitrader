@@ -321,6 +321,7 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                     fee_rate=_config["fee_rate"],
                     allow_negative_edge=True,
                     adjacent_only=True,
+                    require_liquidity=False,
                 )
                 tick_near = [
                     v for v in all_close
@@ -521,20 +522,27 @@ async def _refresh_markets() -> None:
                 yb = float(yb_str) if isinstance(yb_str, str) else yb_str / 100.0
                 ya = float(ya_str) if isinstance(ya_str, str) else ya_str / 100.0
                 _market_cache[ticker] = {**_market_cache.get(ticker, {}), **m}
+                oi = m.get("open_interest") or 0
                 tm = _threshold_map.get(ticker)
                 if tm is not None:
                     tm.yes_bid = yb
                     tm.yes_ask = ya
+                    if oi:
+                        tm.open_interest = int(oi)
                     updated += 1
                 bm = _bucket_map.get(ticker)
                 if bm is not None:
                     bm.yes_bid = yb
                     bm.yes_ask = ya
+                    if oi:
+                        bm.open_interest = int(oi)
                     updated += 1
                 itm = _int_threshold_map.get(ticker)
                 if itm is not None:
                     itm.yes_bid = yb
                     itm.yes_ask = ya
+                    if oi:
+                        itm.open_interest = int(oi)
                     updated += 1
             print(f"[Refresh] Prices updated for {updated}/{len(all_tickers)} tickers")
 
@@ -550,6 +558,8 @@ async def _refresh_markets() -> None:
             allow_negative_edge=True,  # paper: trade any genuine violation
         )
         # Near-miss scan: adjacent pairs only to avoid duplicates
+        # require_liquidity=False: near-misses are display-only; OI filter blocks markets
+        # where the bulk REST API omits open_interest (returns 0 by default).
         _near_miss_floor = _min_edge - 0.15  # show pairs within 15 cents of threshold
         all_close = find_violations(
             all_groups,
@@ -558,6 +568,7 @@ async def _refresh_markets() -> None:
             fee_rate=_fee,
             allow_negative_edge=True,
             adjacent_only=True,
+            require_liquidity=False,
         )
         raw_near_misses = sorted(
             [v for v in all_close

@@ -179,6 +179,7 @@ def find_violations(
     fee_rate: float = KALSHI_FEE_RATE,
     allow_negative_edge: bool = False,
     adjacent_only: bool = False,
+    require_liquidity: bool = True,
 ) -> List[ViolationSignal]:
     """
     For each group with >= 2 threshold markets, check pairs for monotonicity violations.
@@ -212,15 +213,14 @@ def find_violations(
             # Skip markets whose prices haven't been updated yet
             if lower.yes_ask == 0.0 or higher.yes_bid == 0.0:
                 continue
-            # Minimum liquidity: require ≥$50 of open interest on each leg AND
-            # ≥20 contracts. OI=0 means no active market → also blocked (0 * price = 0 < 50).
-            # Note: open_interest > 0 guard intentionally removed so OI=0 is rejected.
-            if lower.open_interest * lower.yes_ask < 50.0:
-                continue
-            if higher.open_interest * (1.0 - higher.yes_bid) < 50.0:
-                continue
-            if lower.open_interest < 20 or higher.open_interest < 20:
-                continue
+            if require_liquidity:
+                # Minimum liquidity: require ≥$50 of open interest on each leg AND ≥20 contracts.
+                if lower.open_interest * lower.yes_ask < 50.0:
+                    continue
+                if higher.open_interest * (1.0 - higher.yes_bid) < 50.0:
+                    continue
+                if lower.open_interest < 20 or higher.open_interest < 20:
+                    continue
             # Fake-liquidity guard: if the higher leg has a huge internal spread,
             # its yes_bid is a thin top-of-book outlier (e.g. 10 contracts at 34¢ while
             # the real ask is at 98¢). We'd only get a few contracts at the advertised
