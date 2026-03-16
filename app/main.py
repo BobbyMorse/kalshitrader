@@ -241,8 +241,8 @@ async def _enrich_depths(violations: list, max_size: int) -> None:
 async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
     """Called by KalshiFeed on every live price update."""
     _state["ticks_received"] += 1
-    # Broadcast tick count every 500 ticks (lightweight partial update)
-    if _state["ticks_received"] % 500 == 0:
+    # Broadcast tick count every 100 ticks (lightweight partial update)
+    if _state["ticks_received"] % 100 == 0:
         asyncio.create_task(_broadcast({"bot_state": {"ticks_received": _state["ticks_received"]}}))
 
     # Update raw cache
@@ -755,6 +755,15 @@ async def startup() -> None:
         await _refresh_markets()
         await _start_feed()
         _state["scan_task"] = asyncio.create_task(_refresh_loop())
+        # Delayed rescan: WS delivers initial price snapshots within ~30s;
+        # re-run full scan once those prices are populated so near misses
+        # and structural anomalies appear immediately on cold start.
+        async def _warm_rescan():
+            await asyncio.sleep(45)
+            if _state["running"]:
+                print("[main] Warm rescan: re-scanning with WS-populated prices…")
+                await _refresh_markets()
+        asyncio.create_task(_warm_rescan())
         print("[main] Bot auto-started.")
     else:
         print("[main] Auth failed — real-time feed not started.")
