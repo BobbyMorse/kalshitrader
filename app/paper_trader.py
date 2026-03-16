@@ -148,6 +148,20 @@ class PaperTrader:
         return list(self._open.values())
 
     @property
+    def open_position_tickers(self) -> set:
+        """Set of all tickers that are legs of open positions (threshold + bucket + single-leg).
+        Used to trigger real-time P&L updates on every tick for those markets."""
+        tickers: set = set()
+        for p in self._open.values():
+            tickers.add(p.lower_ticker)
+            tickers.add(p.higher_ticker)
+        for p in self._bucket_open.values():
+            tickers.update(p.bucket_tickers)
+        for p in self._single_open.values():
+            tickers.add(p.ticker)
+        return tickers
+
+    @property
     def closed_positions(self) -> List[Position]:
         return self._closed
 

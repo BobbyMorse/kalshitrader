@@ -384,6 +384,12 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
     if single_closed:
         broadcast_needed = True
 
+    # Always update P&L when a tick arrives for a ticker in an open position.
+    # Previously P&L only refreshed when a violation was detected — this made
+    # P&L appear frozen between violations (up to 5 min lag).
+    if not broadcast_needed and ticker in _trader.open_position_tickers:
+        broadcast_needed = True
+
     if broadcast_needed:
         _trader.update_marks(_market_cache)
         _trader.update_marks_bucket(_market_cache)
