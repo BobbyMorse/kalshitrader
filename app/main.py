@@ -754,6 +754,10 @@ async def _refresh_markets() -> None:
                 if not _trader.is_positioned(sig.id):
                     if _trader.execute(sig, strategy="threshold_arb"):
                         new_count += 1
+            for sig in structural:
+                if not _trader.is_positioned(sig.id):
+                    if _trader.execute(sig, strategy="structural_arb"):
+                        new_count += 1
             for sig in b_violations:
                 if not _trader.is_positioned(sig.id):
                     if _trader.execute_bucket(sig):
