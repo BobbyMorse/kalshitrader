@@ -241,8 +241,8 @@ async def _enrich_depths(violations: list, max_size: int) -> None:
 async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
     """Called by KalshiFeed on every live price update."""
     _state["ticks_received"] += 1
-    # Broadcast tick count every 500 ticks (lightweight partial update)
-    if _state["ticks_received"] % 500 == 0:
+    # Broadcast tick count every 100 ticks (lightweight partial update)
+    if _state["ticks_received"] % 100 == 0:
         asyncio.create_task(_broadcast({"bot_state": {"ticks_received": _state["ticks_received"]}}))
 
     # Update raw cache
@@ -310,6 +310,33 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                         for v in violations:
                             if not _trader.is_positioned(v.id):
                                 _trader.execute(v, strategy="threshold_arb")
+                    broadcast_needed = True
+
+                # ── Near-miss scan (real-time, same group, same throttle) ───────────
+                _min_edge = _config["min_gross_edge"]
+                all_close = find_violations(
+                    {event_ticker: group_markets},
+                    min_gross_edge=_min_edge - 0.15,
+                    max_size=_config["max_size"],
+                    fee_rate=_config["fee_rate"],
+                    allow_negative_edge=True,
+                    adjacent_only=True,
+                )
+                tick_near = [
+                    v for v in all_close
+                    if v.gross_edge < _min_edge
+                    and not (v.lower.yes_ask >= 0.99 and v.higher.yes_bid >= 0.98)
+                ]
+                group_ticker_set = set(group_tickers)
+                _near_misses[:] = [
+                    v for v in _near_misses
+                    if v.lower.ticker not in group_ticker_set
+                    and v.higher.ticker not in group_ticker_set
+                ]
+                _near_misses.extend(tick_near)
+                _near_misses.sort(key=lambda x: x.gross_edge, reverse=True)
+                del _near_misses[30:]
+                if tick_near:
                     broadcast_needed = True
 
                 # ── Inverted-leg check on every tick (real-time mispricing detection) ──
@@ -677,10 +704,12 @@ async def _refresh_markets() -> None:
 
 
 async def _refresh_loop() -> None:
+    # First refresh already ran at startup; sleep before the next one
     while _state["running"]:
-        await _refresh_markets()
         interval = int(_config.get("refresh_interval", 300))
         await asyncio.sleep(interval)
+        if _state["running"]:
+            await _refresh_markets()
 
 
 # ── Feed lifecycle ────────────────────────────────────────────────────────────
@@ -726,6 +755,15 @@ async def startup() -> None:
         await _refresh_markets()
         await _start_feed()
         _state["scan_task"] = asyncio.create_task(_refresh_loop())
+        # Delayed rescan: WS delivers initial price snapshots within ~30s;
+        # re-run full scan once those prices are populated so near misses
+        # and structural anomalies appear immediately on cold start.
+        async def _warm_rescan():
+            await asyncio.sleep(45)
+            if _state["running"]:
+                print("[main] Warm rescan: re-scanning with WS-populated prices…")
+                await _refresh_markets()
+        asyncio.create_task(_warm_rescan())
         print("[main] Bot auto-started.")
     else:
         print("[main] Auth failed — real-time feed not started.")

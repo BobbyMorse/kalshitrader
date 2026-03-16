@@ -118,7 +118,7 @@ def _load_trade(d: dict) -> TradeRecord:
     )
 
 KALSHI_FEE_RATE = 0.07
-STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trader_state.json")
+STATE_FILE = os.environ.get("STATE_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "trader_state.json"))
 
 
 class PaperTrader:
