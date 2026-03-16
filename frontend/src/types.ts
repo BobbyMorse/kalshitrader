@@ -27,6 +27,7 @@ export interface BotConfig {
   refresh_interval: number;  // seconds between full REST refreshes
   auto_trade: boolean;
   paper_trading: boolean;
+  auto_trade_inverted: boolean;  // auto-execute single-leg inverted signals (directional, risky)
 }
 
 export interface ViolationSignal {

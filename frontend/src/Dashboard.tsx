@@ -909,10 +909,20 @@ function ConfigPanel({
           Full market refresh cadence. Real-time feed handles sub-second detection.
         </p>
       </div>
-      <div className="sm:col-span-3 flex items-center gap-3">
+      <div className="sm:col-span-3 flex flex-wrap items-center gap-4">
         <Button size="sm" className="rounded-2xl" onClick={save}>
           Save Config
         </Button>
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={config?.auto_trade_inverted ?? false}
+            onChange={(e) => onUpdate({ auto_trade_inverted: e.target.checked })}
+            className="rounded"
+          />
+          <span className="text-xs text-slate-600 font-medium">Auto-trade inverted legs</span>
+          <span className="text-[10px] text-amber-500 font-semibold">⚠ directional risk</span>
+        </label>
         <div className="text-xs text-slate-400">
           Fee rate: {fmtPct(config?.fee_rate ?? 0.07)} · Auto-trade:{" "}
           {config?.auto_trade ? "on" : "off"} · Paper mode always on
@@ -1368,7 +1378,7 @@ export default function Dashboard() {
                     </CardTitle>
                     <p className="text-xs text-orange-600/70">
                       Single markets priced <em>cheaper</em> than their adjacent higher threshold.
-                      Monitoring only — not auto-traded (directional risk, not true arb).
+                      Single-leg directional trades — enable auto-trading in Config (high risk, not true arb).
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-1.5">

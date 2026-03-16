@@ -72,6 +72,7 @@ _config: Dict[str, Any] = {
     "refresh_interval": 300,   # seconds between full REST refreshes
     "auto_trade": True,
     "paper_trading": True,
+    "auto_trade_inverted": False,  # auto-execute single-leg inverted signals (directional risk)
 }
 _trader.max_size = _config["max_size"]
 
@@ -329,7 +330,10 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                                 f"ask={sig.market.yes_ask:.2f} adj={sig.adj_higher.yes_ask:.2f} "
                                 f"inv={sig.inversion:.2f}"
                             )
-                    # Single-leg inverted signals are display-only; no auto-trading.
+                    if _config["auto_trade_inverted"] and _config["auto_trade"] and _config["paper_trading"]:
+                        for sig in inverted:
+                            if not _trader.is_positioned(sig.id):
+                                _trader.execute_single_leg(sig)
                     broadcast_needed = True
 
     # ── Bucket sum arb check ──────────────────────────────────────────────────
@@ -610,7 +614,14 @@ async def _refresh_markets() -> None:
                 print(f"  [INVERT] {sig.id}: ask={sig.market.yes_ask:.2f} "
                       f"adj_ask={sig.adj_higher.yes_ask:.2f} inv={sig.inversion:.2f}")
 
-        # Single-leg inverted signals are display-only; no auto-trading.
+        if _config["auto_trade_inverted"] and _config["auto_trade"] and _config["paper_trading"]:
+            inv_new = 0
+            for sig in inverted:
+                if not _trader.is_positioned(sig.id):
+                    if _trader.execute_single_leg(sig):
+                        inv_new += 1
+            if inv_new:
+                print(f"[Refresh] Opened {inv_new} inverted-leg positions")
 
         print(
             f"[Refresh] {_state['markets_fetched']} markets | "
@@ -871,6 +882,7 @@ class ConfigUpdate(BaseModel):
     fee_rate: Optional[float] = None
     refresh_interval: Optional[int] = None
     auto_trade: Optional[bool] = None
+    auto_trade_inverted: Optional[bool] = None
 
 
 @app.get("/debug/groups")
@@ -909,6 +921,8 @@ async def update_config(cfg: ConfigUpdate) -> dict:
         _config["refresh_interval"] = cfg.refresh_interval
     if cfg.auto_trade is not None:
         _config["auto_trade"] = cfg.auto_trade
+    if cfg.auto_trade_inverted is not None:
+        _config["auto_trade_inverted"] = cfg.auto_trade_inverted
     await _broadcast({"type": "config_update", "config": _config})
     return _config
 
