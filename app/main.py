@@ -949,6 +949,24 @@ async def trade_structural(signal_id: str) -> dict:
     return {"ok": True, "position_id": pos.id}
 
 
+@app.post("/inverted/{ticker}/trade")
+async def trade_inverted(ticker: str) -> dict:
+    """Manually execute a single-leg inverted trade."""
+    sig = next((s for s in _inverted_leg_signals if s.id == ticker), None)
+    if sig is None:
+        raise HTTPException(status_code=404, detail=f"Inverted signal not found: {ticker!r}")
+    if _trader.is_positioned(ticker):
+        raise HTTPException(status_code=409, detail="Already positioned")
+    try:
+        pos = _trader.execute_single_leg(sig)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Execution error: {exc}")
+    if pos is None:
+        raise HTTPException(status_code=409, detail="Already positioned or zero size")
+    await _broadcast(_snapshot())
+    return {"ok": True, "position_id": pos.id}
+
+
 @app.post("/positions/{pos_id}/flatten")
 async def flatten_position(pos_id: str) -> dict:
     # Try threshold/structural arb first, then single-leg

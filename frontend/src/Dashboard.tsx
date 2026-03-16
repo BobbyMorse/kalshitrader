@@ -417,6 +417,28 @@ function StructuralAnomalyRow({ sig }: { sig: StructuralAnomaly }) {
 // ── Inverted-leg row ──────────────────────────────────────────────────────────
 
 function InvertedLegRow({ sig }: { sig: InvertedLegSignal }) {
+  const [trading, setTrading] = useState(false);
+  const [traded, setTraded] = useState(false);
+
+  async function handleTrade() {
+    if (trading || traded) return;
+    if (!confirm(`Buy YES on ${sig.ticker} @ ${fmtCents(sig.ask)}, target exit ≥ ${fmtCents(sig.target_bid)}?`)) return;
+    setTrading(true);
+    try {
+      const res = await fetch(`${API}/inverted/${encodeURIComponent(sig.ticker)}/trade`, { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Trade failed (${res.status}): ${err.detail || err.message || res.statusText || "unknown error"}`);
+      } else {
+        setTraded(true);
+      }
+    } catch (e) {
+      alert(`Network error: ${e}`);
+    } finally {
+      setTrading(false);
+    }
+  }
+
   return (
     <div className="rounded-xl border border-orange-200 bg-white p-3 text-xs">
       <div className="flex items-start justify-between gap-2">
@@ -446,9 +468,22 @@ function InvertedLegRow({ sig }: { sig: InvertedLegSignal }) {
             Inversion: {fmtCents(sig.inversion)} · target bid: {fmtCents(sig.target_bid)}
           </div>
           <div className="mt-0.5 text-[10px] text-slate-400">
-            Auto-trade: buy {sig.ticker} YES at {fmtCents(sig.ask)}, exit ≥ {fmtCents(sig.target_bid)}
+            Buy {sig.ticker} YES @ {fmtCents(sig.ask)}, exit ≥ {fmtCents(sig.target_bid)}
           </div>
         </div>
+        <button
+          onClick={handleTrade}
+          disabled={trading || traded}
+          className={`shrink-0 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors ${
+            traded
+              ? "bg-green-100 text-green-600 cursor-default"
+              : trading
+              ? "bg-slate-100 text-slate-400 cursor-wait"
+              : "bg-orange-500 text-white hover:bg-orange-600 active:bg-orange-700"
+          }`}
+        >
+          {traded ? "Traded ✓" : trading ? "…" : "Trade"}
+        </button>
       </div>
     </div>
   );
