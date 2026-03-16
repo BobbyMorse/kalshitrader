@@ -609,6 +609,7 @@ async def _refresh_markets() -> None:
             max_size=_config["max_size"],
             fee_rate=0,
             allow_negative_edge=True,
+            require_liquidity=False,
         )
         b_near_misses = sorted(
             [v for v in all_b_close if v.gross_edge < _min_edge],

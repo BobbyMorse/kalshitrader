@@ -322,13 +322,8 @@ def find_structural_anomalies(
                 if lower.yes_ask >= 0.97:
                     continue
 
-                # Minimum liquidity (same rules as threshold violations)
-                if lower.open_interest * lower.yes_ask < 50.0:
-                    continue
-                if higher.open_interest * (1.0 - higher.yes_bid) < 50.0:
-                    continue
-                if lower.open_interest < 20 or higher.open_interest < 20:
-                    continue
+                # OI filter removed: bulk REST API omits open_interest → OI=0 blocks all pairs.
+                # Spread filter in find_violations + price filters above are sufficient.
 
                 gross_edge = higher.yes_bid - lower.yes_ask
                 if gross_edge < min_gross_edge:
@@ -415,12 +410,8 @@ def find_inverted_legs(
             adj_spread = higher.yes_ask - higher.yes_bid
             if lower.yes_bid < 0.10 or spread > 0.40 or adj_spread > 0.40:
                 continue
-            # Minimum dollar liquidity: $50 in open interest AND ≥20 contracts.
-            # Note: open_interest > 0 guard intentionally removed so OI=0 is rejected.
-            if lower.open_interest * lower.yes_ask < 50.0:
-                continue
-            if lower.open_interest < 20:
-                continue
+            # OI filter intentionally removed: bulk REST API omits open_interest (returns 0),
+            # which would block all signals. Spread + bid filters above are sufficient quality gates.
 
             # Bid inversion check: buyers must ALSO confirm the lower market is underpriced.
             # Normally bid(lower) >= bid(higher) since lower threshold is more likely.
@@ -510,6 +501,7 @@ def find_bucket_violations(
     max_size: int,
     fee_rate: float = KALSHI_FEE_RATE,
     allow_negative_edge: bool = False,
+    require_liquidity: bool = True,
 ) -> List[BucketSumSignal]:
     """
     For each bucket group, check if sum(all asks) < 1.0.
@@ -541,14 +533,14 @@ def find_bucket_violations(
         if not allow_negative_edge and net_edge <= 0:
             continue
 
-        # Minimum liquidity per bucket: ≥$50 OI × ask and ≥20 contracts.
-        # OI=0 guard intentionally removed so OI=0 buckets are rejected.
-        if any(b.open_interest * b.yes_ask < 50.0 for b in buckets):
-            continue
-        if any(b.open_interest < 20 for b in buckets):
-            continue
+        if require_liquidity:
+            # Minimum liquidity per bucket: ≥$50 OI × ask and ≥20 contracts.
+            if any(b.open_interest * b.yes_ask < 50.0 for b in buckets):
+                continue
+            if any(b.open_interest < 20 for b in buckets):
+                continue
 
-        avail = min(min(b.open_interest for b in buckets), max_size)
+        avail = min((min(b.open_interest for b in buckets) if require_liquidity else max_size), max_size)
         avail = max(avail, 1)
 
         violations.append(BucketSumSignal(
