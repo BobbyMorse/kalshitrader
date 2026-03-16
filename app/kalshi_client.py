@@ -387,24 +387,38 @@ class KalshiClient:
                         break
                 print(f"[Markets] General sweep: {total_pages} pages, {general_count} non-parlay markets")
 
-                # 2. Also do full coverage of structural-analysis series (complete strike chains)
+                # 2. Auto-discover ALL series via GET /series, then fetch each one's markets.
+                # This replaces the hardcoded BINARY_SERIES list entirely.
                 import asyncio as _asyncio
 
+                try:
+                    s_path = self._path("/series")
+                    s_headers = self._auth_headers("GET", s_path)
+                    s_resp = await client.get(self._url("/series"), headers=s_headers, timeout=15)
+                    all_series = [s["ticker"] for s in s_resp.json().get("series", []) if s.get("ticker")]
+                    print(f"[Markets] Auto-discovered {len(all_series)} series")
+                except Exception as e:
+                    all_series = list(self.BINARY_SERIES)
+                    print(f"[Markets] Series discovery failed ({e}), using fallback list ({len(all_series)} series)")
+
+                _sem = _asyncio.Semaphore(20)  # cap concurrent series fetches
+
                 async def fetch_series_all(series: str) -> List[Dict]:
-                    results: List[Dict] = []
-                    cur: Optional[str] = None
-                    while True:
-                        p: Dict[str, Any] = {"status": status, "limit": 1000, "series_ticker": series}
-                        if cur:
-                            p["cursor"] = cur
-                        pg, cur = await fetch_page(client, p)
-                        results.extend(pg)
-                        if not cur or len(pg) < 1000:
-                            break
-                    return results
+                    async with _sem:
+                        results: List[Dict] = []
+                        cur: Optional[str] = None
+                        while True:
+                            p: Dict[str, Any] = {"status": status, "limit": 1000, "series_ticker": series}
+                            if cur:
+                                p["cursor"] = cur
+                            pg, cur = await fetch_page(client, p)
+                            results.extend(pg)
+                            if not cur or len(pg) < 1000:
+                                break
+                        return results
 
                 series_results = await _asyncio.gather(
-                    *[fetch_series_all(s) for s in self.BINARY_SERIES]
+                    *[fetch_series_all(s) for s in all_series]
                 )
                 for page in series_results:
                     for m in page:
