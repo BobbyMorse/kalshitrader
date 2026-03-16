@@ -1343,7 +1343,7 @@ export default function Dashboard() {
                 </Card>
               )}
 
-              {/* Inverted Legs — auto-traded single-leg mispricings */}
+              {/* Inverted Legs — display-only signals, not auto-traded */}
               {invertedLegs.length > 0 && (
                 <Card className="rounded-3xl shadow-sm border-orange-100 bg-orange-50/30">
                   <CardHeader className="pb-2">
@@ -1352,10 +1352,13 @@ export default function Dashboard() {
                       <Badge className="rounded-full bg-orange-100 text-orange-700 text-xs">
                         {invertedLegs.length}
                       </Badge>
+                      <span className="text-[10px] font-normal bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded-full">
+                        display only
+                      </span>
                     </CardTitle>
                     <p className="text-xs text-orange-600/70">
-                      Single markets priced <em>cheaper</em> than their adjacent higher threshold —
-                      clearly mispriced. Auto-traded: bot buys the cheap leg and exits when price normalizes.
+                      Single markets priced <em>cheaper</em> than their adjacent higher threshold.
+                      Monitoring only — not auto-traded (directional risk, not true arb).
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-1.5">
