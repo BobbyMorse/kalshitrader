@@ -316,7 +316,7 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                 _min_edge = _config["min_gross_edge"]
                 all_close = find_violations(
                     {event_ticker: group_markets},
-                    min_gross_edge=_min_edge - 0.15,
+                    min_gross_edge=-1.0,
                     max_size=_config["max_size"],
                     fee_rate=_config["fee_rate"],
                     allow_negative_edge=True,
@@ -557,13 +557,12 @@ async def _refresh_markets() -> None:
             fee_rate=_fee,
             allow_negative_edge=True,  # paper: trade any genuine violation
         )
-        # Near-miss scan: adjacent pairs only to avoid duplicates
-        # require_liquidity=False: near-misses are display-only; OI filter blocks markets
-        # where the bulk REST API omits open_interest (returns 0 by default).
-        _near_miss_floor = _min_edge - 0.15  # show pairs within 15 cents of threshold
+        # Near-miss scan: adjacent pairs only, no floor — show all with valid prices.
+        # Sorted by gross_edge desc so closest-to-violation pairs appear first.
+        # require_liquidity=False: display-only; OI=0 from bulk API would block everything.
         all_close = find_violations(
             all_groups,
-            min_gross_edge=_near_miss_floor,
+            min_gross_edge=-1.0,
             max_size=_config["max_size"],
             fee_rate=_fee,
             allow_negative_edge=True,
@@ -605,7 +604,7 @@ async def _refresh_markets() -> None:
         )
         all_b_close = find_bucket_violations(
             bucket_groups,
-            min_gross_edge=_min_edge - 0.30,
+            min_gross_edge=-1.0,
             max_size=_config["max_size"],
             fee_rate=0,
             allow_negative_edge=True,
@@ -627,12 +626,11 @@ async def _refresh_markets() -> None:
             fee_rate=_fee,
             min_gross_edge=0.001,  # genuine violations only (exclude exact 0¢ edge)
         )
-        _near_miss_floor_structural = -(_fee + 0.08)  # within ~15¢ of being a true arb
         structural_near = find_structural_anomalies(
             all_groups,
             max_size=_config["max_size"],
             fee_rate=_fee,
-            min_gross_edge=_near_miss_floor_structural,
+            min_gross_edge=-1.0,  # no floor — show all, sorted closest-to-violation first
             top_n=30,
         )
         _structural_anomalies.clear()
