@@ -152,8 +152,10 @@ def group_threshold_markets(markets: List[dict]) -> Dict[str, List[ThresholdMark
         if expiry_dt is None or expiry_dt <= now:
             continue
 
-        # event_ticker = everything before the final -T<number>
+        # event_ticker = everything before the final threshold suffix
         event_ticker = _T_RE.sub("", ticker)
+        if event_ticker == ticker:  # T-prefix didn't match → bare-float suffix
+            event_ticker = _BARE_FLOAT_RE.sub("", ticker)
         series = event_ticker.split("-")[0].upper()
 
         # REST API returns yes_bid_dollars/yes_ask_dollars as string decimals (0-1 range).
@@ -451,10 +453,6 @@ def find_inverted_legs(
                 detected_at=now,
             ))
 
-    if n_pairs > 0:
-        print(f"[InvertedLegs] {n_pairs} pairs: {n_no_price} no-price, "
-              f"{n_expired} expired, {n_illiquid} illiquid, "
-              f"{n_not_inverted} not-inverted → {len(signals)} signals")
     signals.sort(key=lambda s: s.inversion, reverse=True)
     return signals[:top_n]
 

@@ -608,6 +608,13 @@ async def _refresh_markets() -> None:
         _fee = _config["fee_rate"]
         _min_edge = _config["min_gross_edge"]
         all_groups = {**groups, **int_groups}
+
+        # Diagnostic: count groups with ≥2 priced markets
+        _priced_groups = sum(
+            1 for mlist in all_groups.values()
+            if sum(1 for m in mlist if m.yes_ask > 0 and m.yes_bid > 0) >= 2
+        )
+        print(f"[Refresh] {len(all_groups)} T+INT groups, {_priced_groups} have ≥2 priced markets")
         violations = find_violations(
             all_groups,
             min_gross_edge=_min_edge,
@@ -717,11 +724,12 @@ async def _refresh_markets() -> None:
             if inv_new:
                 print(f"[Refresh] Opened {inv_new} inverted-leg positions")
 
+        best_near = f" best={near_misses[0].gross_edge:.3f}" if near_misses else ""
         print(
             f"[Refresh] {_state['markets_fetched']} markets | "
             f"{len(groups)} T-groups / {len(int_groups)} INT-groups / {len(bucket_groups)} B-groups | "
-            f"{len(violations)} T-violations / {len(b_violations)} B-violations | "
-            f"{len(near_misses)} T-near / {len(b_near_misses)} B-near | "
+            f"{len(violations)} T-viol / {len(b_violations)} B-viol | "
+            f"{len(near_misses)} T-near{best_near} / {len(b_near_misses)} B-near | "
             f"{len(structural)} structural | "
             f"{len(_threshold_map)} T-tickers / {len(_int_threshold_map)} INT-tickers / {len(_bucket_map)} B-tickers"
         )
