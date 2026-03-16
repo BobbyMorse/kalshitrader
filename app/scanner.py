@@ -419,12 +419,12 @@ def find_inverted_legs(
             if lower.ticker in seen:
                 continue
 
-            # Liquidity filter: bid ≥ 3¢ and spread (ask - bid) ≤ 40¢ on BOTH markets.
-            # Wide spread on either leg = thin/unreliable price (e.g. adj_higher at 93¢ ask / 7¢ bid
-            # → 86¢ spread means the 93¢ ask is a lone outlier, not a real market price).
+            # Liquidity filter: both bids must be active (≥10¢ lower, ≥5¢ adj) and spreads tight.
+            # Low bids = deep OTM / stale quotes; wide spreads = unreliable lone-outlier asks.
+            # These are the exact conditions that create false "inversions".
             spread = lower.yes_ask - lower.yes_bid
             adj_spread = higher.yes_ask - higher.yes_bid
-            if lower.yes_bid < 0.03 or spread > 0.40 or adj_spread > 0.40:
+            if lower.yes_bid < 0.10 or higher.yes_bid < 0.05 or spread > 0.30 or adj_spread > 0.30:
                 n_illiquid += 1
                 continue
             # OI filter intentionally removed: bulk REST API omits open_interest (returns 0),

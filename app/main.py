@@ -382,7 +382,7 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                 # ── Inverted-leg check on every tick (real-time mispricing detection) ──
                 inverted = find_inverted_legs(
                     {event_ticker: group_markets},
-                    min_inversion=0.05,
+                    min_inversion=0.15,
                     top_n=5,
                 )
                 if inverted:
@@ -698,7 +698,7 @@ async def _refresh_markets() -> None:
         )
 
         # Inverted-leg scan: find clearly mispriced single markets
-        inverted = find_inverted_legs(all_groups, min_inversion=0.05, top_n=20)
+        inverted = find_inverted_legs(all_groups, min_inversion=0.15, top_n=20)
         _inverted_leg_signals.clear()
         _inverted_leg_signals.extend(inverted)
 

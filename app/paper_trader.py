@@ -586,6 +586,25 @@ class PaperTrader:
                       f"bid={pos.current_bid:.2f} PnL=${pos.realized_pnl:.2f}")
                 continue
 
+            # Stop-loss: cut when bid drops to 50% of entry price
+            stop_loss = pos.entry_price * 0.50
+            if pos.current_bid <= stop_loss:
+                loss = pos.current_bid - pos.entry_price
+                pos.realized_pnl = round(loss * pos.size, 4)
+                pos.exit_price = pos.current_bid
+                pos.exit_time = now
+                pos.exit_reason = "stop_loss"
+                pos.status = "closed"
+                pos.unrealized_pnl = 0.0
+                self._single_open.pop(pos.id)
+                self._single_closed.append(pos)
+                self._single_positioned.pop(pos.signal_id, None)
+                auto_closed.append(pos.id)
+                print(f"[PaperTrader] STOP-LOSS SINGLE-LEG {pos.id}: "
+                      f"bid={pos.current_bid:.2f} entry={pos.entry_price:.2f} "
+                      f"PnL=${pos.realized_pnl:.2f}")
+                continue
+
             # Expire
             if pos.expiry_dt <= now:
                 gain = pos.current_bid - pos.entry_price
