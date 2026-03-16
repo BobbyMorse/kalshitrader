@@ -220,11 +220,20 @@ function SignalRow({
         </div>
       </div>
 
-      {/* Entry cost + size */}
+      {/* Entry cost + depth */}
       <div>
         <div className="text-[10px] text-slate-400 uppercase tracking-wide">Entry cost</div>
         <div className="font-mono font-medium text-slate-700">{fmtCents(sig.entry_cost)}</div>
-        <div className="text-[10px] text-slate-400">avail {sig.avail_size} cts</div>
+        {sig.lower_depth > 0 || sig.higher_depth > 0 ? (
+          <div className="text-[10px] text-slate-400">
+            <span className={sig.avail_size <= 5 ? "text-amber-500 font-semibold" : ""}>
+              {sig.avail_size} cts
+            </span>
+            <span className="text-slate-400"> ({sig.lower_depth}↑/{sig.higher_depth}↓)</span>
+          </div>
+        ) : (
+          <div className="text-[10px] text-slate-400">~{sig.avail_size} cts (OI est.)</div>
+        )}
       </div>
 
       {/* Action */}

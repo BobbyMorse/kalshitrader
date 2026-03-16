@@ -184,6 +184,56 @@ def _snapshot() -> dict:
     }
 
 
+# ── Orderbook depth enrichment ────────────────────────────────────────────────
+
+async def _enrich_depths(violations: list, max_size: int) -> None:
+    """Fetch real L2 orderbook depth for both legs of each violation and update:
+      - lower_depth: contracts available at lower.yes_ask (consuming NO bids)
+      - higher_depth: contracts available at higher.yes_bid (consuming YES bids)
+      - avail_size: min(lower_depth, higher_depth) — true executable size
+
+    Kalshi orderbook format:
+      'no'  key = NO bids (highest first)  → these ARE the YES sellers (YES ask side)
+      'yes' key = YES bids (highest first) → these ARE the NO sellers (NO ask side)
+    """
+    import asyncio as _asyncio
+
+    async def _fetch_pair(v: ViolationSignal) -> None:
+        lower_ob, higher_ob = await _asyncio.gather(
+            _client.get_orderbook(v.lower.ticker),
+            _client.get_orderbook(v.higher.ticker),
+            return_exceptions=True,
+        )
+        if isinstance(lower_ob, Exception) or isinstance(higher_ob, Exception):
+            return
+
+        # Lower leg: we BUY YES at yes_ask.
+        # YES ask at price P = NO bid at (100 - P). Depth = qty of NO bids at that price.
+        lower_ask_c = round(v.lower.yes_ask * 100)
+        no_target = 100 - lower_ask_c
+        v.lower_depth = sum(
+            int(qty) for price, qty in lower_ob.get("no", [])
+            if int(price) == no_target
+        )
+
+        # Higher leg: we BUY NO at (1 - yes_bid).
+        # NO ask at price Q = YES bid at (100 - Q). Depth = qty of YES bids at yes_bid.
+        higher_bid_c = round(v.higher.yes_bid * 100)
+        v.higher_depth = sum(
+            int(qty) for price, qty in higher_ob.get("yes", [])
+            if int(price) == higher_bid_c
+        )
+
+        if v.lower_depth > 0 and v.higher_depth > 0:
+            v.avail_size = min(v.lower_depth, v.higher_depth, max_size)
+        elif v.lower_depth > 0 or v.higher_depth > 0:
+            # One side returned data but not the other; still cap conservatively
+            v.avail_size = min(v.lower_depth or v.higher_depth, max_size)
+        # else: orderbook returned empty (no resting orders at exact price); keep OI-based estimate
+
+    await _asyncio.gather(*[_fetch_pair(v) for v in violations])
+
+
 # ── Real-time tick handler ────────────────────────────────────────────────────
 
 
@@ -240,12 +290,15 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                     allow_negative_edge=True,  # paper: trade any genuine violation, fees tracked separately
                 )
                 if violations:
+                    # Fetch real L2 depth at the target prices before trading/broadcasting.
+                    await _enrich_depths(violations, _config["max_size"])
                     sig_index = {s.id: i for i, s in enumerate(_signals)}
                     for v in violations:
                         print(
                             f"[Feed] VIOLATION {v.id}: "
                             f"edge={v.gross_edge:.3f} net={v.net_edge:.3f} "
-                            f"exp={v.expected_edge:.3f} mid_p={v.middle_prob:.2f}"
+                            f"exp={v.expected_edge:.3f} mid_p={v.middle_prob:.2f} "
+                            f"depth={v.lower_depth}/{v.higher_depth}"
                         )
                         if v.id in sig_index:
                             _signals[sig_index[v.id]] = v
@@ -486,6 +539,9 @@ async def _refresh_markets() -> None:
                 _series_cnt[v.series] += 1
             if len(near_misses) >= 30:
                 break
+        # Enrich true violations with real orderbook depth before trading/display.
+        if violations:
+            await _enrich_depths(violations, _config["max_size"])
         _signals.clear()
         _signals.extend(violations)
         _near_misses.clear()

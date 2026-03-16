@@ -499,6 +499,30 @@ class KalshiClient:
             resp = await client.delete(self._url(endpoint), headers=headers)
             return resp.status_code == 200
 
+    async def get_orderbook(self, ticker: str) -> Dict:
+        """Fetch L2 orderbook for a market.
+
+        Returns {'yes': [[price_cents, qty], ...], 'no': [[price_cents, qty], ...]}
+        where 'yes' = YES bids (buyers), 'no' = NO bids (buyers = YES sellers).
+
+        To find depth available at the YES ask:
+          → look in 'no' at price (100 - yes_ask_cents)   [NO buyers ARE the YES sellers]
+        To find depth available at the NO ask (= buying NO / exiting YES):
+          → look in 'yes' at price yes_bid_cents           [YES buyers ARE the NO sellers]
+        """
+        if self.mock_mode:
+            return {"yes": [], "no": []}
+        endpoint = f"/markets/{ticker}/orderbook"
+        headers = self._auth_headers("GET", self._path(endpoint))
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                resp = await client.get(self._url(endpoint), headers=headers)
+                if resp.status_code == 200:
+                    return resp.json().get("orderbook", {"yes": [], "no": []})
+        except Exception:
+            pass
+        return {"yes": [], "no": []}
+
     async def get_orders(self, status: str = "resting") -> List[Dict]:
         if self.mock_mode:
             return []

@@ -45,6 +45,8 @@ export interface ViolationSignal {
   expected_edge: number;    // net_edge + middle_prob * (1 - fee) — true EV
   entry_cost: number;       // ask(lower) + (1 - bid(higher))
   avail_size: number;
+  lower_depth: number;      // orderbook qty at lower.yes_ask (0 = not yet fetched)
+  higher_depth: number;     // orderbook qty at higher.yes_bid
   detected_at: string;
   event_ticker?: string;
 }

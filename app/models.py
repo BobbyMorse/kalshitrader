@@ -50,6 +50,10 @@ class ViolationSignal:
     # When both legs resolve YES, payout = $2 instead of $1.
     middle_prob: float = 0.0        # market-implied P(both legs win)
     expected_edge: float = 0.0      # net_edge + middle_prob * (1 - fee) — true EV per contract
+    # True orderbook depth at the target prices (filled by main.py after detection).
+    # 0 = not yet fetched.
+    lower_depth: int = 0            # YES ask depth at lower.yes_ask
+    higher_depth: int = 0           # NO ask depth at (1 - higher.yes_bid)
 
     def to_dict(self) -> dict:
         # Recompute from live prices (ThresholdMarket objects are updated by ticks)
@@ -76,6 +80,8 @@ class ViolationSignal:
             "expected_edge": live_expected_edge,
             "entry_cost": round(self.lower.yes_ask + (1.0 - self.higher.yes_bid), 4),
             "avail_size": self.avail_size,
+            "lower_depth": self.lower_depth,
+            "higher_depth": self.higher_depth,
             "detected_at": self.detected_at.isoformat(),
             "event_ticker": self.lower.event_ticker,
         }
