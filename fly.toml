@@ -24,6 +24,10 @@ primary_region = "iad"
   cpu_kind = "shared"
   cpus = 1
 
+[mounts]
+  source = "kalshi_data"
+  destination = "/data"
+
 # Required secrets — set with: fly secrets set KEY=value
 # fly secrets set KALSHI_API_KEY_ID=your-key-id
 # fly secrets set KALSHI_PRIVATE_KEY="$(cat /path/to/bmo.key)"
