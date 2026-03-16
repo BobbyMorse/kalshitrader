@@ -172,6 +172,7 @@ def group_threshold_markets(markets: List[dict]) -> Dict[str, List[ThresholdMark
             yes_bid=yes_bid,
             yes_ask=yes_ask,
             open_interest=m.get("open_interest", 0),
+            title=m.get("yes_sub_title", ""),
         )
         groups.setdefault(event_ticker, []).append(tm)
 
@@ -409,6 +410,17 @@ def find_inverted_legs(
         if sorted_markets[0].expiry_dt - now < min_ttl:
             n_expired += len(sorted_markets) - 1
             continue
+
+        # Categorical market check: in a real threshold ladder, ask prices must
+        # DECREASE as threshold increases (lower threshold = more likely = higher price).
+        # If the majority of priced pairs have INCREASING asks, this is a mutually-
+        # exclusive bucket market (e.g. KXMOVWI margin-of-victory) masquerading as a
+        # threshold ladder because Kalshi uses -T1/-T2/... as bucket IDs, not real thresholds.
+        priced = [m for m in sorted_markets if m.yes_ask > 0]
+        if len(priced) >= 3:
+            increasing = sum(1 for i in range(len(priced) - 1) if priced[i].yes_ask < priced[i + 1].yes_ask)
+            if increasing > len(priced) // 2:
+                continue  # bell-curve pricing = categorical market, skip
 
         for i in range(len(sorted_markets) - 1):
             lower = sorted_markets[i]

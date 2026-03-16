@@ -457,11 +457,11 @@ function InvertedLegRow({ sig }: { sig: InvertedLegSignal }) {
           {/* Cheap leg vs reference */}
           <div className="mt-1 flex items-center gap-2 font-mono text-[10px]">
             <span className="bg-red-50 border border-red-200 text-red-700 rounded px-1.5 py-0.5">
-              {sig.threshold} ask {fmtCents(sig.ask)}
+              {sig.title || fmtThreshold(sig.threshold)} ask {fmtCents(sig.ask)}
             </span>
             <span className="text-slate-300">vs</span>
             <span className="bg-slate-50 border border-slate-200 text-slate-600 rounded px-1.5 py-0.5">
-              {sig.adj_threshold} ask {fmtCents(sig.adj_ask)}
+              {sig.adj_title || fmtThreshold(sig.adj_threshold)} ask {fmtCents(sig.adj_ask)}
             </span>
           </div>
           <div className="mt-0.5 text-[10px] text-orange-600 font-semibold">

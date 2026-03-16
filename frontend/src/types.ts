@@ -184,8 +184,10 @@ export interface InvertedLegSignal {
   expiry: string;
   ticker: string;
   threshold: number;
+  title?: string;           // human-readable label (yes_sub_title from API)
   adj_ticker: string;
   adj_threshold: number;
+  adj_title?: string;       // adjacent market label
   ask: number;              // current ask of cheap market (0-1)
   adj_ask: number;          // adjacent higher's ask (0-1) — fair-value reference
   inversion: number;        // adj_ask - ask (how mispriced)

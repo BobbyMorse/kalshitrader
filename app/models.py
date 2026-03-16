@@ -28,6 +28,7 @@ class ThresholdMarket:
     yes_bid: float          # 0-1
     yes_ask: float          # 0-1
     open_interest: int = 0
+    title: str = ""         # human-readable label (yes_sub_title from API)
 
     def mid(self) -> float:
         return (self.yes_bid + self.yes_ask) / 2
@@ -273,8 +274,10 @@ class SingleLegSignal:
             "expiry": self.expiry_dt.isoformat(),
             "ticker": self.market.ticker,
             "threshold": self.market.threshold,
+            "title": self.market.title,
             "adj_ticker": self.adj_higher.ticker,
             "adj_threshold": self.adj_higher.threshold,
+            "adj_title": self.adj_higher.title,
             "ask": round(self.market.yes_ask, 4),
             "adj_ask": round(self.adj_higher.yes_ask, 4),
             "inversion": live_inv,

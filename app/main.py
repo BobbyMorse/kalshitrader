@@ -401,6 +401,8 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                         for sig in inverted:
                             if not _trader.is_positioned(sig.id):
                                 _trader.execute_single_leg(sig)
+                        # Remove auto-traded signals from display list
+                        _inverted_leg_signals[:] = [s for s in _inverted_leg_signals if not _trader.is_positioned(s.id)]
                     broadcast_needed = True
 
     # ── Bucket sum arb check ──────────────────────────────────────────────────
@@ -723,6 +725,8 @@ async def _refresh_markets() -> None:
                         inv_new += 1
             if inv_new:
                 print(f"[Refresh] Opened {inv_new} inverted-leg positions")
+            # Remove auto-traded signals from display list
+            _inverted_leg_signals[:] = [s for s in _inverted_leg_signals if not _trader.is_positioned(s.id)]
 
         best_near = f" best={near_misses[0].gross_edge:.3f}" if near_misses else ""
         print(
