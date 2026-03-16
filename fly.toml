@@ -13,14 +13,14 @@ primary_region = "iad"
   min_machines_running = 1
 
   [[http_service.checks]]
-    grace_period = "30s"
+    grace_period = "120s"
     interval = "15s"
     method = "GET"
     path = "/"
     timeout = "5s"
 
 [[vm]]
-  memory = "1gb"
+  memory = "2gb"
   cpu_kind = "shared"
   cpus = 1
 

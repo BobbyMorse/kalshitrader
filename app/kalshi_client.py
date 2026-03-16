@@ -387,20 +387,24 @@ class KalshiClient:
                         break
                 print(f"[Markets] General sweep: {total_pages} pages, {general_count} non-parlay markets")
 
-                # 2. Auto-discover ALL series via GET /series, then fetch each one's markets.
-                # This replaces the hardcoded BINARY_SERIES list entirely.
+                # 2. Supplement general sweep with targeted per-series fetches for known
+                # high-value series. We do NOT fetch all auto-discovered series (9k+) because
+                # that causes OOM on 1GB machines — general pagination already covers most markets.
                 import asyncio as _asyncio
 
                 try:
                     s_path = self._path("/series")
                     s_headers = self._auth_headers("GET", s_path)
                     s_resp = await client.get(self._url("/series"), headers=s_headers, timeout=15)
-                    all_series = [s["ticker"] for s in s_resp.json().get("series", []) if s.get("ticker")]
-                    print(f"[Markets] Auto-discovered {len(all_series)} series")
-                except Exception as e:
-                    all_series = list(self.BINARY_SERIES)
-                    print(f"[Markets] Series discovery failed ({e}), using fallback list ({len(all_series)} series)")
+                    discovered = [s["ticker"] for s in s_resp.json().get("series", []) if s.get("ticker")]
+                    new_series = [s for s in discovered if s not in seen and not any(s.startswith(p) for p in _SKIP_PREFIXES)]
+                    print(f"[Markets] Discovered {len(discovered)} series total, {len(new_series)} not yet fetched")
+                except Exception:
+                    new_series = []
 
+                # Only supplementally fetch BINARY_SERIES (known high-value series) to avoid OOM.
+                # General pagination above already covers most open markets.
+                all_series = list(self.BINARY_SERIES)
                 _sem = _asyncio.Semaphore(20)  # cap concurrent series fetches
 
                 async def fetch_series_all(series: str) -> List[Dict]:
