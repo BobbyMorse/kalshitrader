@@ -127,6 +127,7 @@ _state: Dict[str, Any] = {
     "feed_connected": False,
     "ticks_received": 0,
     "scan_task": None,
+    "pnl_task": None,
     "feed_task": None,
     "feed": None,
     "ws_clients": set(),
@@ -867,6 +868,17 @@ async def _refresh_loop() -> None:
             await _refresh_markets()
 
 
+async def _pnl_snapshot_loop() -> None:
+    """Append a P&L history point every 60 seconds unconditionally.
+    This keeps the chart smooth even when illiquid markets produce no ticks.
+    """
+    await asyncio.sleep(60)   # initial delay so prices are warmed up first
+    while _state["running"]:
+        _maybe_snapshot_pnl()
+        await _broadcast(_snapshot())
+        await asyncio.sleep(60)
+
+
 # ── Feed lifecycle ────────────────────────────────────────────────────────────
 
 
@@ -910,6 +922,7 @@ async def startup() -> None:
         await _refresh_markets()
         await _start_feed()
         _state["scan_task"] = asyncio.create_task(_refresh_loop())
+        _state["pnl_task"] = asyncio.create_task(_pnl_snapshot_loop())
         # Delayed rescan: WS delivers initial price snapshots within ~30s;
         # re-run full scan once those prices are populated so near misses
         # and structural anomalies appear immediately on cold start.
@@ -922,6 +935,15 @@ async def startup() -> None:
         print("[main] Bot auto-started.")
     else:
         print("[main] Auth failed — real-time feed not started.")
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    """Save state before Fly.io kills the process."""
+    print("[main] Shutdown: saving trader state and pnl_history…")
+    _trader.save()
+    _save_pnl_history()
+    print("[main] Shutdown: state saved.")
 
 
 # ── WebSocket endpoint ────────────────────────────────────────────────────────

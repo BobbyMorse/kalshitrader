@@ -788,41 +788,73 @@ class PaperTrader:
         os.replace(tmp, path)
 
     def load(self, path: str = STATE_FILE) -> None:
-        """Load persisted state from JSON file (called once at startup)."""
+        """Load persisted state from JSON file (called once at startup).
+        Each record is loaded individually so one bad record never wipes everything.
+        """
         if not os.path.exists(path):
+            print(f"[PaperTrader] No state file at {path} — starting fresh")
             return
+        bad = 0
         try:
             with open(path) as f:
                 state = json.load(f)
-            for k, v in state.get("open", {}).items():
-                self._open[k] = _load_position(v)
-            for v in state.get("closed", []):
-                self._closed.append(_load_position(v))
-            for v in state.get("trades", []):
-                self._trades.append(_load_trade(v))
-            self._positioned.update(state.get("positioned", {}))
-            for k, v in state.get("bucket_open", {}).items():
-                self._bucket_open[k] = _load_bucket_position(v)
-            for v in state.get("bucket_closed", []):
-                self._bucket_closed.append(_load_bucket_position(v))
-            self._bucket_positioned.update(state.get("bucket_positioned", {}))
-            for k, v in state.get("single_open", {}).items():
-                self._single_open[k] = _load_single_leg_position(v)
-            for v in state.get("single_closed", []):
-                self._single_closed.append(_load_single_leg_position(v))
-            self._single_positioned.update(state.get("single_positioned", {}))
-            now = datetime.now(timezone.utc)
-            for ticker, until_str in state.get("single_cooldown", {}).items():
-                until = datetime.fromisoformat(until_str)
-                if until > now:  # only load unexpired cooldowns
-                    self._single_cooldown[ticker] = until
-            print(
-                f"[PaperTrader] Loaded state: {len(self._open)} open, "
-                f"{len(self._closed)} closed, {len(self._trades)} trades, "
-                f"{len(self._bucket_open)} bucket_open, {len(self._single_open)} single_open"
-            )
         except Exception as e:
-            print(f"[PaperTrader] Failed to load state from {path}: {e}")
+            print(f"[PaperTrader] CRITICAL: could not parse state file {path}: {e}")
+            return
+
+        for k, v in state.get("open", {}).items():
+            try:
+                self._open[k] = _load_position(v)
+            except Exception as e:
+                bad += 1; print(f"[PaperTrader] skip bad open pos {k}: {e}")
+        for v in state.get("closed", []):
+            try:
+                self._closed.append(_load_position(v))
+            except Exception as e:
+                bad += 1; print(f"[PaperTrader] skip bad closed pos: {e}")
+        for v in state.get("trades", []):
+            try:
+                self._trades.append(_load_trade(v))
+            except Exception as e:
+                bad += 1; print(f"[PaperTrader] skip bad trade: {e}")
+        self._positioned.update(state.get("positioned", {}))
+        for k, v in state.get("bucket_open", {}).items():
+            try:
+                self._bucket_open[k] = _load_bucket_position(v)
+            except Exception as e:
+                bad += 1; print(f"[PaperTrader] skip bad bucket_open {k}: {e}")
+        for v in state.get("bucket_closed", []):
+            try:
+                self._bucket_closed.append(_load_bucket_position(v))
+            except Exception as e:
+                bad += 1; print(f"[PaperTrader] skip bad bucket_closed: {e}")
+        self._bucket_positioned.update(state.get("bucket_positioned", {}))
+        for k, v in state.get("single_open", {}).items():
+            try:
+                self._single_open[k] = _load_single_leg_position(v)
+            except Exception as e:
+                bad += 1; print(f"[PaperTrader] skip bad single_open {k}: {e}")
+        for v in state.get("single_closed", []):
+            try:
+                self._single_closed.append(_load_single_leg_position(v))
+            except Exception as e:
+                bad += 1; print(f"[PaperTrader] skip bad single_closed: {e}")
+        self._single_positioned.update(state.get("single_positioned", {}))
+        now = datetime.now(timezone.utc)
+        for ticker, until_str in state.get("single_cooldown", {}).items():
+            try:
+                until = datetime.fromisoformat(until_str)
+                if until > now:
+                    self._single_cooldown[ticker] = until
+            except Exception:
+                pass
+        print(
+            f"[PaperTrader] Loaded from {path}: "
+            f"{len(self._open)} open, {len(self._closed)} closed, "
+            f"{len(self._trades)} trades, {len(self._bucket_open)} bucket_open, "
+            f"{len(self._single_open)} single_open"
+            + (f" | {bad} records skipped" if bad else "")
+        )
 
     # ── Reset ─────────────────────────────────────────────────────────────────
 
