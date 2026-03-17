@@ -428,8 +428,11 @@ def find_ladder_mean_reversion(
                 upper_nb.yes_bid <= 0 or upper_nb.yes_ask <= 0):
                 continue
 
-            # Liquidity: middle rung must have active bid and not be too wide
-            if market.yes_bid < 0.05 or (market.yes_ask - market.yes_bid) > 0.30:
+            # Liquidity: middle rung must have active bid and tight spread.
+            # Wide spreads create false anomalies (mid is far from ask) and make
+            # the target land below entry, guaranteeing a loss on exit.
+            spread = market.yes_ask - market.yes_bid
+            if market.yes_bid < 0.05 or spread > 0.15:
                 continue
             # Neighbors must also be liquid enough to be reliable references
             if lower_nb.yes_bid < 0.05 or upper_nb.yes_bid < 0.05:
@@ -444,6 +447,12 @@ def find_ladder_mean_reversion(
 
             # Target: exit when market.yes_bid closes within 2¢ of interpolated fair value
             target_bid = round(interp_mid - 0.02, 4)
+
+            # CRITICAL: target must be above the entry price (yes_ask).
+            # If target <= yes_ask, any "target_hit" exit is a guaranteed loss.
+            # Math: profit requires anomaly > spread/2 + 0.02.
+            if target_bid <= market.yes_ask:
+                continue
 
             signals.append(SingleLegSignal(
                 id=market.ticker,
