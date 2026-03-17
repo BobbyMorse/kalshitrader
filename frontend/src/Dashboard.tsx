@@ -445,7 +445,7 @@ function InvertedLegRow({ sig }: { sig: InvertedLegSignal }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="font-semibold text-slate-700">{sig.series}</span>
-            <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">INVERT</span>
+            <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">MEAN-REV</span>
             <span className="text-[10px] text-slate-400">expires {expiryIn(sig.expiry)}</span>
             {sig.event_ticker && (
               <a href={kalshiUrl(sig.event_ticker)} target="_blank" rel="noopener noreferrer"
@@ -454,18 +454,26 @@ function InvertedLegRow({ sig }: { sig: InvertedLegSignal }) {
               </a>
             )}
           </div>
-          {/* Cheap leg vs reference — show bid/ask to expose spread */}
-          <div className="mt-1 flex items-center gap-2 font-mono text-[10px]">
-            <span className="bg-red-50 border border-red-200 text-red-700 rounded px-1.5 py-0.5">
-              {sig.title || fmtThreshold(sig.threshold)} {fmtCents(sig.bid ?? 0)}/{fmtCents(sig.ask)}
+          {/* Three-rung ladder: lower neighbor → cheap middle → upper neighbor */}
+          <div className="mt-1 flex items-center gap-1 font-mono text-[10px] flex-wrap">
+            {sig.adj_lower_ticker && (
+              <>
+                <span className="bg-slate-50 border border-slate-200 text-slate-500 rounded px-1.5 py-0.5">
+                  {sig.adj_lower_title || fmtThreshold(sig.adj_lower_threshold ?? 0)} {fmtCents(sig.adj_lower_bid ?? 0)}/{fmtCents(sig.adj_lower_ask ?? 0)}
+                </span>
+                <span className="text-slate-300">›</span>
+              </>
+            )}
+            <span className="bg-red-50 border border-red-200 text-red-700 rounded px-1.5 py-0.5 font-semibold">
+              {sig.title || fmtThreshold(sig.threshold)} {fmtCents(sig.bid ?? 0)}/{fmtCents(sig.ask)} ↓cheap
             </span>
-            <span className="text-slate-300">vs</span>
-            <span className="bg-slate-50 border border-slate-200 text-slate-600 rounded px-1.5 py-0.5">
+            <span className="text-slate-300">›</span>
+            <span className="bg-slate-50 border border-slate-200 text-slate-500 rounded px-1.5 py-0.5">
               {sig.adj_title || fmtThreshold(sig.adj_threshold)} {fmtCents(sig.adj_bid ?? 0)}/{fmtCents(sig.adj_ask)}
             </span>
           </div>
           <div className="mt-0.5 text-[10px] text-orange-600 font-semibold">
-            Mid inversion: {fmtCents(sig.inversion)} · target bid: {fmtCents(sig.target_bid)}
+            Anomaly: {fmtCents(sig.inversion)} below fair ({fmtCents(sig.interp_mid)}) · target: {fmtCents(sig.target_bid)}
           </div>
           <div className="mt-0.5 text-[10px] text-slate-400">
             Buy {sig.ticker} YES @ {fmtCents(sig.ask)}, exit ≥ {fmtCents(sig.target_bid)}
@@ -973,7 +981,7 @@ function ConfigPanel({
             onChange={(e) => onUpdate({ auto_trade_inverted: e.target.checked })}
             className="rounded"
           />
-          <span className="text-xs text-slate-600 font-medium">Auto-trade inverted legs</span>
+          <span className="text-xs text-slate-600 font-medium">Auto-trade mean reversion</span>
           <span className="text-[10px] text-amber-500 font-semibold">⚠ directional risk</span>
         </label>
         <div className="text-xs text-slate-400">
@@ -1416,12 +1424,12 @@ export default function Dashboard() {
                 </Card>
               )}
 
-              {/* Inverted Legs — display-only signals, not auto-traded */}
+              {/* Mean Reversion — ladder rungs cheap vs both neighbors */}
               {invertedLegs.length > 0 && (
                 <Card className="rounded-3xl shadow-sm border-orange-100 bg-orange-50/30">
                   <CardHeader className="pb-2">
                     <CardTitle className="flex items-center gap-2 text-orange-700">
-                      🎯 Inverted Legs
+                      🎯 Mean Reversion
                       <Badge className="rounded-full bg-orange-100 text-orange-700 text-xs">
                         {invertedLegs.length}
                       </Badge>
@@ -1430,8 +1438,8 @@ export default function Dashboard() {
                       </span>
                     </CardTitle>
                     <p className="text-xs text-orange-600/70">
-                      Single markets priced <em>cheaper</em> than their adjacent higher threshold.
-                      Single-leg directional trades — enable auto-trading in Config (high risk, not true arb).
+                      Ladder rungs priced below interpolated fair value from <em>both</em> neighbors.
+                      Directional bet on price normalization — enable auto-trading in Config (risky, not true arb).
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-1.5">

@@ -31,7 +31,7 @@ from kalshi_feed import KalshiFeed
 from models import (BucketMarket, BucketSumSignal, SingleLegSignal,
                     StructuralAnomaly, ThresholdMarket, ViolationSignal)
 from paper_trader import PaperTrader
-from scanner import (find_bucket_violations, find_inverted_legs,
+from scanner import (find_bucket_violations, find_ladder_mean_reversion,
                      find_structural_anomalies, find_violations,
                      group_bucket_markets, group_integer_threshold_markets,
                      group_threshold_markets)
@@ -379,10 +379,10 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                 if tick_near:
                     broadcast_needed = True
 
-                # ── Inverted-leg check on every tick (real-time mispricing detection) ──
-                inverted = find_inverted_legs(
+                # ── Ladder mean-reversion check on every tick ──────────────────────
+                inverted = find_ladder_mean_reversion(
                     {event_ticker: group_markets},
-                    min_inversion=0.15,
+                    min_anomaly=0.05,
                     top_n=5,
                 )
                 if inverted:
@@ -393,9 +393,9 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                         else:
                             _inverted_leg_signals.append(sig)
                             print(
-                                f"[Feed] INVERT {sig.id}: "
-                                f"ask={sig.market.yes_ask:.2f} adj={sig.adj_higher.yes_ask:.2f} "
-                                f"inv={sig.inversion:.2f}"
+                                f"[Feed] MEAN-REV {sig.id}: "
+                                f"mid={sig.market.mid():.2f} interp={((sig.adj_lower.mid() + sig.adj_higher.mid()) / 2 if sig.adj_lower else sig.adj_higher.mid()):.2f} "
+                                f"anomaly={sig.inversion:.2f}"
                             )
                     if _config["auto_trade_inverted"] and _config["auto_trade"] and _config["paper_trading"]:
                         for sig in inverted:
@@ -713,16 +713,18 @@ async def _refresh_markets() -> None:
             [s for s in structural_near if s.gross_edge < 0.0][:20]
         )
 
-        # Inverted-leg scan: find clearly mispriced single markets
-        inverted = find_inverted_legs(all_groups, min_inversion=0.15, top_n=20)
+        # Ladder mean-reversion scan: find rungs cheap relative to both neighbors
+        inverted = find_ladder_mean_reversion(all_groups, min_anomaly=0.05, top_n=20)
         _inverted_leg_signals.clear()
         _inverted_leg_signals.extend(inverted)
 
         if inverted:
-            print(f"[Refresh] {len(inverted)} inverted leg(s) detected")
+            print(f"[Refresh] {len(inverted)} mean-reversion signal(s) detected")
             for sig in inverted[:3]:
-                print(f"  [INVERT] {sig.id}: ask={sig.market.yes_ask:.2f} "
-                      f"adj_ask={sig.adj_higher.yes_ask:.2f} inv={sig.inversion:.2f}")
+                interp = ((sig.adj_lower.mid() + sig.adj_higher.mid()) / 2
+                          if sig.adj_lower else sig.adj_higher.mid())
+                print(f"  [MEAN-REV] {sig.id}: mid={sig.market.mid():.2f} "
+                      f"interp={interp:.2f} anomaly={sig.inversion:.2f}")
 
         if _config["auto_trade_inverted"] and _config["auto_trade"] and _config["paper_trading"]:
             inv_new = 0
@@ -731,7 +733,7 @@ async def _refresh_markets() -> None:
                     if _trader.execute_single_leg(sig):
                         inv_new += 1
             if inv_new:
-                print(f"[Refresh] Opened {inv_new} inverted-leg positions")
+                print(f"[Refresh] Opened {inv_new} mean-reversion positions")
             # Remove auto-traded signals from display list
             _inverted_leg_signals[:] = [s for s in _inverted_leg_signals if not _trader.is_positioned(s.id)]
 

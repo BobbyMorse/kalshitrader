@@ -179,20 +179,29 @@ export interface StructuralAnomaly {
 }
 
 export interface InvertedLegSignal {
-  id: string;               // = ticker of the cheap market
+  id: string;               // = ticker of the cheap middle rung
   series: string;
   expiry: string;
   ticker: string;
   threshold: number;
   title?: string;           // human-readable label (yes_sub_title from API)
+  // Upper-threshold neighbor (lower price)
   adj_ticker: string;
   adj_threshold: number;
-  adj_title?: string;       // adjacent market label
+  adj_title?: string;
   ask: number;              // current ask of cheap market (0-1)
   bid: number;              // current bid of cheap market (0-1)
-  adj_ask: number;          // adjacent higher's ask (0-1) — fair-value reference
-  adj_bid: number;          // adjacent higher's bid (0-1)
-  inversion: number;        // mid(adj) - mid(market) — mid-price inversion
+  adj_ask: number;
+  adj_bid: number;
+  // Lower-threshold neighbor (higher price) — both neighbors required for mean-reversion
+  adj_lower_ticker?: string;
+  adj_lower_threshold?: number;
+  adj_lower_title?: string;
+  adj_lower_ask?: number;
+  adj_lower_bid?: number;
+  // Signal quality
+  inversion: number;        // anomaly: interpolated_mid - market.mid() (>0 = cheap)
+  interp_mid: number;       // interpolated fair value from both neighbors
   target_bid: number;       // auto-exit when bid reaches this
   detected_at: string;
   event_ticker?: string;

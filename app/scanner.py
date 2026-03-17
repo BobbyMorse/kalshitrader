@@ -377,93 +377,82 @@ def find_structural_anomalies(
     return anomalies[:top_n]
 
 
-# ── Inverted-leg mispricing ───────────────────────────────────────────────────
+# ── Ladder mean-reversion ─────────────────────────────────────────────────────
 
 
-def find_inverted_legs(
+def find_ladder_mean_reversion(
     groups: Dict[str, List[ThresholdMarket]],
-    min_inversion: float = 0.15,
+    min_anomaly: float = 0.05,
     top_n: int = 20,
 ) -> List[SingleLegSignal]:
     """
-    Detect markets where ask(lower_threshold) is significantly cheaper than
-    ask(adjacent_higher_threshold) — the ladder is price-inverted.
+    Detect ladder rungs that are anomalously cheap relative to BOTH neighbors.
 
-    Normally ask(lower) >= ask(higher) because lower threshold = more likely.
-    When ask(lower) << ask(higher), the lower market is mispriced cheap.
-    The correct trade: buy YES on the cheap market (single leg, directional).
-    Auto-exit when the bid reaches near the adjacent reference price (target_bid).
+    For sorted ladder [..., T_{k-1}, T_k, T_{k+1}, ...]:
+      interpolated_mid = (T_{k-1}.mid() + T_{k+1}.mid()) / 2
+      anomaly = interpolated_mid - T_k.mid()  (positive → T_k is cheap)
 
-    min_inversion: how many dollars cheaper the lower must be (default 15¢).
+    Both neighbors must agree the price is too low, making this a cleaner
+    signal than single-neighbor inversion (which fires on spread differences).
+    The trade: buy YES on the cheap rung, exit when price normalizes.
+
+    min_anomaly: minimum ¢ discount vs interpolated fair value (default 5¢).
     """
     signals: List[SingleLegSignal] = []
-    seen: set = set()
     now = datetime.now(timezone.utc)
     min_ttl = timedelta(minutes=30)
 
-    n_pairs = n_no_price = n_expired = n_illiquid = n_not_inverted = 0
-
     for event_ticker, markets in groups.items():
-        if len(markets) < 2:
+        if len(markets) < 3:  # need at least one middle rung with two neighbors
             continue
         sorted_markets = sorted(markets, key=lambda x: x.threshold)
         if sorted_markets[0].expiry_dt - now < min_ttl:
-            n_expired += len(sorted_markets) - 1
             continue
 
-        # Categorical market check: in a real threshold ladder, ask prices must
-        # DECREASE as threshold increases (lower threshold = more likely = higher price).
-        # If the majority of priced pairs have INCREASING asks, this is a mutually-
-        # exclusive bucket market (e.g. KXMOVWI margin-of-victory) masquerading as a
-        # threshold ladder because Kalshi uses -T1/-T2/... as bucket IDs, not real thresholds.
-        priced = [m for m in sorted_markets if m.yes_ask > 0]
+        # Categorical market check: skip bell-curve/bucket markets masquerading as
+        # threshold ladders (prices INCREASE with threshold = mutually exclusive buckets)
+        priced = [m for m in sorted_markets if m.yes_ask > 0 and m.yes_bid > 0]
         if len(priced) >= 3:
             increasing = sum(1 for i in range(len(priced) - 1) if priced[i].yes_ask < priced[i + 1].yes_ask)
             if increasing > len(priced) // 2:
-                continue  # bell-curve pricing = categorical market, skip
-
-        for i in range(len(sorted_markets) - 1):
-            lower = sorted_markets[i]
-            higher = sorted_markets[i + 1]
-            n_pairs += 1
-
-            if lower.yes_ask <= 0 or higher.yes_ask <= 0:
-                n_no_price += 1
-                continue
-            if lower.ticker in seen:
                 continue
 
-            # Liquidity filter: both bids must be active (≥10¢ lower, ≥5¢ adj) and spreads tight.
-            # Low bids = deep OTM / stale quotes; wide spreads = unreliable lone-outlier asks.
-            # These are the exact conditions that create false "inversions".
-            spread = lower.yes_ask - lower.yes_bid
-            adj_spread = higher.yes_ask - higher.yes_bid
-            if lower.yes_bid < 0.10 or higher.yes_bid < 0.05 or spread > 0.30 or adj_spread > 0.30:
-                n_illiquid += 1
-                continue
-            # OI filter intentionally removed: bulk REST API omits open_interest (returns 0),
-            # which would block all signals. Spread + bid filters above are sufficient quality gates.
+        for k in range(1, len(sorted_markets) - 1):
+            lower_nb = sorted_markets[k - 1]   # lower threshold (higher price)
+            market   = sorted_markets[k]        # candidate cheap middle rung
+            upper_nb = sorted_markets[k + 1]   # upper threshold (lower price)
 
-            # Inversion: mid(lower) should be >= mid(higher) (lower threshold = more likely).
-            # Using mid prices instead of ask prices avoids false positives from different
-            # bid-ask spreads across illiquid markets (wide-spread markets have inflated asks).
-            # A mid-level inversion is a genuine pricing anomaly, not just a liquidity artifact.
-            inversion = higher.mid() - lower.mid()  # positive = lower is cheaper = inverted
-            if inversion < min_inversion:
-                n_not_inverted += 1
+            # All three must have valid prices
+            if (lower_nb.yes_bid <= 0 or lower_nb.yes_ask <= 0 or
+                market.yes_bid   <= 0 or market.yes_ask   <= 0 or
+                upper_nb.yes_bid <= 0 or upper_nb.yes_ask <= 0):
                 continue
 
-            seen.add(lower.ticker)
-            # Target: exit when lower's bid climbs to near the adjacent higher's current mid
-            target_bid = round(higher.mid() - 0.03, 4)
+            # Liquidity: middle rung must have active bid and not be too wide
+            if market.yes_bid < 0.05 or (market.yes_ask - market.yes_bid) > 0.30:
+                continue
+            # Neighbors must also be liquid enough to be reliable references
+            if lower_nb.yes_bid < 0.05 or upper_nb.yes_bid < 0.05:
+                continue
+
+            # Interpolated fair value from both neighbors
+            interp_mid = (lower_nb.mid() + upper_nb.mid()) / 2
+            anomaly = interp_mid - market.mid()  # positive = market is cheap
+
+            if anomaly < min_anomaly:
+                continue
+
+            # Target: exit when market.yes_bid closes within 2¢ of interpolated fair value
+            target_bid = round(interp_mid - 0.02, 4)
 
             signals.append(SingleLegSignal(
-                id=lower.ticker,
-                series=lower.series,
-                expiry_dt=lower.expiry_dt,
-                market=lower,
-                adj_higher=higher,
-                inversion=inversion,
+                id=market.ticker,
+                series=market.series,
+                expiry_dt=market.expiry_dt,
+                market=market,
+                adj_higher=upper_nb,
+                adj_lower=lower_nb,
+                inversion=round(anomaly, 4),
                 target_bid=target_bid,
                 detected_at=now,
             ))

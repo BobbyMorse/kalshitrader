@@ -250,25 +250,36 @@ class StructuralAnomaly:
 @dataclass
 class SingleLegSignal:
     """
-    A single mispriced market: ask(lower_threshold) << ask(adjacent_higher_threshold).
-    Normally lower threshold is MORE likely → MORE expensive. When inverted, the cheaper
-    leg is mispriced and should be bought outright (not hedged).
+    A ladder rung that is anomalously cheap relative to both its neighbors
+    (mean-reversion strategy).
+
+    For sorted ladder [..., T_{k-1}, T_k, T_{k+1}, ...]:
+      interpolated_mid = (T_{k-1}.mid() + T_{k+1}.mid()) / 2
+      anomaly = interpolated_mid - T_k.mid()  (positive → T_k is cheap)
+
+    Both neighbors must agree the price is too low. When the anomaly closes,
+    the position profits.
 
     Trade: buy YES on `market` at market.yes_ask.
-    Exit:  when market.yes_bid >= target_bid (price normalized to fair value).
+    Exit:  when market.yes_bid >= target_bid (≈ interpolated fair value).
     """
     id: str                         # = market.ticker
     series: str
     expiry_dt: datetime
-    market: ThresholdMarket         # the cheap mispriced market (lower threshold)
-    adj_higher: ThresholdMarket     # adjacent higher threshold (reference for fair value)
-    inversion: float                # adj_higher.yes_ask - market.yes_ask (>0 when inverted)
+    market: ThresholdMarket         # the cheap middle rung
+    adj_higher: ThresholdMarket     # upper threshold neighbor (lower price)
+    inversion: float                # anomaly: interpolated_mid - market.mid() (>0 = cheap)
     target_bid: float               # auto-exit when market.yes_bid reaches this
     detected_at: datetime
+    adj_lower: Optional[ThresholdMarket] = None   # lower threshold neighbor (higher price)
 
     def to_dict(self) -> dict:
-        live_inv = round(self.adj_higher.mid() - self.market.mid(), 4)
-        return {
+        if self.adj_lower is not None:
+            live_interp = round((self.adj_lower.mid() + self.adj_higher.mid()) / 2, 4)
+        else:
+            live_interp = round(self.adj_higher.mid(), 4)
+        live_anomaly = round(live_interp - self.market.mid(), 4)
+        d = {
             "id": self.id,
             "series": self.series,
             "expiry": self.expiry_dt.isoformat(),
@@ -282,11 +293,19 @@ class SingleLegSignal:
             "bid": round(self.market.yes_bid, 4),
             "adj_ask": round(self.adj_higher.yes_ask, 4),
             "adj_bid": round(self.adj_higher.yes_bid, 4),
-            "inversion": live_inv,
+            "inversion": live_anomaly,
+            "interp_mid": live_interp,
             "target_bid": round(self.target_bid, 4),
             "detected_at": self.detected_at.isoformat(),
             "event_ticker": self.market.event_ticker,
         }
+        if self.adj_lower is not None:
+            d["adj_lower_ticker"] = self.adj_lower.ticker
+            d["adj_lower_threshold"] = self.adj_lower.threshold
+            d["adj_lower_title"] = self.adj_lower.title
+            d["adj_lower_ask"] = round(self.adj_lower.yes_ask, 4)
+            d["adj_lower_bid"] = round(self.adj_lower.yes_bid, 4)
+        return d
 
 
 @dataclass
