@@ -151,6 +151,7 @@ _bucket_map: Dict[str, BucketMarket] = {}            # ticker → BucketMarket
 _bucket_groups: Dict[str, List[str]] = {}            # event_ticker → [tickers]
 _pnl_history: List[dict] = []
 _PNL_FILE = _STATE_FILE.replace("trader_state.json", "pnl_history.json")
+_last_pnl_snapshot: float = 0.0   # monotonic time; snapshot P&L at most once per minute
 
 
 def _load_pnl_history() -> None:
@@ -179,6 +180,29 @@ def _save_pnl_history() -> None:
 
 
 _load_pnl_history()
+
+
+def _maybe_snapshot_pnl() -> None:
+    """Append a P&L history point at most once per minute (called from tick handler)."""
+    global _last_pnl_snapshot
+    now_mono = time.monotonic()
+    if now_mono - _last_pnl_snapshot < 60.0:
+        return
+    _last_pnl_snapshot = now_mono
+    _strat = _trader.realized_pnl_by_strategy
+    _pnl_history.append({
+        "time": datetime.now(timezone.utc).isoformat(),
+        "realized": round(_trader.realized_pnl, 4),
+        "unrealized": round(_trader.unrealized_pnl, 4),
+        "total": round(_trader.realized_pnl + _trader.unrealized_pnl, 4),
+        "open_positions": len(_trader.open_positions),
+        "threshold": round(_strat.get("threshold_arb", 0.0), 4),
+        "structural": round(_strat.get("structural_arb", 0.0), 4),
+        "bucket": round(_strat.get("bucket_arb", 0.0), 4),
+        "meanrev": round(_strat.get("mispriced_leg", 0.0), 4),
+    })
+    # Keep capped; no disk write here (REST refresh handles persistence)
+    del _pnl_history[:-500]
 
 
 # ── WebSocket helpers ─────────────────────────────────────────────────────────
@@ -493,6 +517,7 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
     if broadcast_needed:
         _trader.update_marks(_market_cache)
         _trader.update_marks_bucket(_market_cache)
+        _maybe_snapshot_pnl()   # add a P&L history point at most once per minute
         await _broadcast(_snapshot())
 
     # Yield to event loop so health checks and other coroutines can run
