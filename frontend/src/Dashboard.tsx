@@ -1584,8 +1584,19 @@ export default function Dashboard() {
             {/* Open single-leg positions */}
             {openSinglePos.length > 0 && (
               <Card className="rounded-3xl shadow-sm border-orange-100">
-                <CardHeader>
+                <CardHeader className="flex flex-row items-center justify-between">
                   <CardTitle className="text-orange-700">Open Inverted-Leg Positions ({openSinglePos.length})</CardTitle>
+                  <button
+                    className="text-xs bg-red-500 text-white rounded-xl px-3 py-1.5 font-semibold hover:bg-red-600"
+                    onClick={async () => {
+                      if (!confirm(`Flatten all ${openSinglePos.length} open inverted-leg positions at current market prices?`)) return;
+                      const res = await fetch(`${API}/inverted/flatten-all`, { method: "POST" });
+                      const d = await res.json().catch(() => ({}));
+                      alert(res.ok ? `Closed ${d.closed} positions, P&L: ${d.total_pnl?.toFixed(2)}` : "Failed: " + (d.detail || res.statusText));
+                    }}
+                  >
+                    Flatten All
+                  </button>
                 </CardHeader>
                 <CardContent className="space-y-2">
                   {openSinglePos.map((p) => (

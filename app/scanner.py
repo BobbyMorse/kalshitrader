@@ -448,10 +448,11 @@ def find_ladder_mean_reversion(
             # Target: exit when market.yes_bid closes within 2¢ of interpolated fair value
             target_bid = round(interp_mid - 0.02, 4)
 
-            # CRITICAL: target must be above the entry price (yes_ask).
+            # CRITICAL: target must be meaningfully above the entry price (yes_ask).
             # If target <= yes_ask, any "target_hit" exit is a guaranteed loss.
+            # Require at least 5¢ profit potential to justify the directional risk.
             # Math: profit requires anomaly > spread/2 + 0.02.
-            if target_bid <= market.yes_ask:
+            if target_bid < market.yes_ask + 0.05:
                 continue
 
             signals.append(SingleLegSignal(

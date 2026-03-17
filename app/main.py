@@ -380,7 +380,9 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                 if tick_near:
                     broadcast_needed = True
 
-                # ── Ladder mean-reversion check on every tick ──────────────────────
+                # ── Ladder mean-reversion check on every tick (detect only, NEVER auto-trade) ──
+                # Mean-reversion is directional and must be reviewed manually.
+                # Auto-trading on ticks causes dozens of positions per minute — never do this.
                 inverted = find_ladder_mean_reversion(
                     {event_ticker: group_markets},
                     min_anomaly=0.05,
@@ -398,12 +400,6 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                                 f"mid={sig.market.mid():.2f} interp={((sig.adj_lower.mid() + sig.adj_higher.mid()) / 2 if sig.adj_lower else sig.adj_higher.mid()):.2f} "
                                 f"anomaly={sig.inversion:.2f}"
                             )
-                    if _config["auto_trade_inverted"] and _config["auto_trade"] and _config["paper_trading"]:
-                        for sig in inverted:
-                            if not _trader.is_positioned(sig.id):
-                                _trader.execute_single_leg(sig)
-                        # Remove auto-traded signals from display list
-                        _inverted_leg_signals[:] = [s for s in _inverted_leg_signals if not _trader.is_positioned(s.id)]
                     broadcast_needed = True
 
     # ── Bucket sum arb check ──────────────────────────────────────────────────
@@ -1034,6 +1030,21 @@ async def flatten_position(pos_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Position not found or already closed")
     await _broadcast(_snapshot())
     return {"ok": True, "pnl": pos.realized_pnl}
+
+
+@app.post("/inverted/flatten-all")
+async def flatten_all_inverted() -> dict:
+    """Flatten all open single-leg (mean-reversion/inverted) positions at once."""
+    open_ids = [p.id for p in _trader.single_leg_open_positions]
+    closed = 0
+    total_pnl = 0.0
+    for pos_id in open_ids:
+        pos = _trader.flatten_single_leg(pos_id)
+        if pos is not None:
+            closed += 1
+            total_pnl += pos.realized_pnl
+    await _broadcast(_snapshot())
+    return {"ok": True, "closed": closed, "total_pnl": round(total_pnl, 4)}
 
 
 class ConfigUpdate(BaseModel):
