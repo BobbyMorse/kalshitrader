@@ -150,6 +150,35 @@ _int_threshold_groups: Dict[str, List[str]] = {}     # event_ticker → [tickers
 _bucket_map: Dict[str, BucketMarket] = {}            # ticker → BucketMarket
 _bucket_groups: Dict[str, List[str]] = {}            # event_ticker → [tickers]
 _pnl_history: List[dict] = []
+_PNL_FILE = _STATE_FILE.replace("trader_state.json", "pnl_history.json")
+
+
+def _load_pnl_history() -> None:
+    if not os.path.exists(_PNL_FILE):
+        return
+    try:
+        with open(_PNL_FILE) as f:
+            data = json.load(f)
+        _pnl_history.extend(data)
+        print(f"[main] Loaded {len(data)} pnl_history points")
+    except Exception as e:
+        print(f"[main] Failed to load pnl_history: {e}")
+
+
+def _save_pnl_history() -> None:
+    try:
+        tmp = _PNL_FILE + ".tmp"
+        parent = os.path.dirname(tmp)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(tmp, "w") as f:
+            json.dump(_pnl_history[-500:], f)
+        os.replace(tmp, _PNL_FILE)
+    except Exception as e:
+        print(f"[main] Failed to save pnl_history: {e}")
+
+
+_load_pnl_history()
 
 
 # ── WebSocket helpers ─────────────────────────────────────────────────────────
@@ -214,13 +243,13 @@ def _snapshot() -> dict:
         "inverted_legs": [s.to_dict() for s in _inverted_leg_signals],
         "positions": (
             [p.to_dict() for p in open_pos] +
-            [p.to_dict() for p in closed_pos[-30:]] +
+            [p.to_dict() for p in closed_pos[-100:]] +
             [p.to_dict() for p in bucket_open] +
-            [p.to_dict() for p in bucket_closed[-10:]] +
+            [p.to_dict() for p in bucket_closed[-30:]] +
             [p.to_dict() for p in _trader.single_leg_open_positions] +
-            [p.to_dict() for p in _trader.single_leg_closed_positions[-10:]]
+            [p.to_dict() for p in _trader.single_leg_closed_positions[-100:]]
         ),
-        "trades": [t.to_dict() for t in _trader.all_trades[-100:]],
+        "trades": [t.to_dict() for t in _trader.all_trades[-500:]],
         "pnl_history": _pnl_history[-200:],
     }
 
@@ -776,13 +805,19 @@ async def _refresh_markets() -> None:
             if new_count:
                 print(f"[Refresh] Opened {new_count} new paper positions")
 
+        _strat = _trader.realized_pnl_by_strategy
         _pnl_history.append({
             "time": datetime.now(timezone.utc).isoformat(),
             "realized": round(_trader.realized_pnl, 4),
             "unrealized": round(_trader.unrealized_pnl, 4),
             "total": round(_trader.realized_pnl + _trader.unrealized_pnl, 4),
             "open_positions": len(_trader.open_positions),
+            "threshold": round(_strat.get("threshold_arb", 0.0), 4),
+            "structural": round(_strat.get("structural_arb", 0.0), 4),
+            "bucket": round(_strat.get("bucket_arb", 0.0), 4),
+            "meanrev": round(_strat.get("mispriced_leg", 0.0), 4),
         })
+        _save_pnl_history()
 
         _state["last_scan"] = datetime.now(timezone.utc).isoformat()
         _state["scan_count"] += 1

@@ -1020,6 +1020,7 @@ export default function Dashboard() {
   const [tradedSignalIds, setTradedSignalIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState("signals");
   const [unseenTrades, setUnseenTrades] = useState(0);
+  const [stratFilter, setStratFilter] = useState<"all" | "threshold" | "structural" | "bucket" | "meanrev">("all");
   const seenTradeIds = useRef<Set<string>>(new Set());
 
   // Request browser notification permission on first render
@@ -1072,6 +1073,25 @@ export default function Dashboard() {
   const activeBucketSignals = bucketSignals.filter((s) => !positionedIds.has(s.id));
   const totalActiveSignals = activeSignals.length + activeBucketSignals.length;
 
+  // Per-strategy stats from trades array
+  const stratStats = useMemo(() => {
+    const s: Record<string, { pnl: number; count: number; wins: number }> = {
+      threshold_arb: { pnl: 0, count: 0, wins: 0 },
+      structural_arb: { pnl: 0, count: 0, wins: 0 },
+      bucket_arb: { pnl: 0, count: 0, wins: 0 },
+      mispriced_leg: { pnl: 0, count: 0, wins: 0 },
+    };
+    trades.forEach((t) => {
+      if (t.pnl === null || t.action === "OPEN") return;
+      const key = t.strategy || "threshold_arb";
+      if (!s[key]) s[key] = { pnl: 0, count: 0, wins: 0 };
+      s[key].pnl += t.pnl;
+      s[key].count += 1;
+      if (t.pnl > 0) s[key].wins += 1;
+    });
+    return s;
+  }, [trades]);
+
   // PnL chart
   const chartData = useMemo(
     () =>
@@ -1080,6 +1100,10 @@ export default function Dashboard() {
         total: p.total,
         realized: p.realized,
         unrealized: p.unrealized,
+        threshold: p.threshold ?? 0,
+        structural: p.structural ?? 0,
+        bucket: p.bucket ?? 0,
+        meanrev: p.meanrev ?? 0,
       })),
     [pnlHistory]
   );
@@ -1457,8 +1481,23 @@ export default function Dashboard() {
             <div className="grid gap-5 lg:grid-cols-[2fr_1fr]">
               {/* P&L chart */}
               <Card className="rounded-3xl shadow-sm">
-                <CardHeader>
+                <CardHeader className="pb-2">
                   <CardTitle>P&L History</CardTitle>
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    {(["all", "threshold", "structural", "bucket", "meanrev"] as const).map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => setStratFilter(s)}
+                        className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                          stratFilter === s
+                            ? "bg-blue-600 text-white"
+                            : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                        }`}
+                      >
+                        {s === "all" ? "All" : s === "threshold" ? "Threshold" : s === "structural" ? "Structural" : s === "bucket" ? "Bucket" : "Mean-Rev"}
+                      </button>
+                    ))}
+                  </div>
                 </CardHeader>
                 <CardContent className="h-56 pt-2">
                   {chartData.length === 0 ? (
@@ -1475,23 +1514,14 @@ export default function Dashboard() {
                           formatter={(v: number) => [`$${v.toFixed(2)}`]}
                           labelFormatter={() => ""}
                         />
-                        <Area
-                          type="monotone"
-                          dataKey="total"
-                          name="Total P&L"
-                          stroke="#2563eb"
-                          fill="#dbeafe"
-                          strokeWidth={2}
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="realized"
-                          name="Realized"
-                          stroke="#16a34a"
-                          fill="#dcfce7"
-                          strokeWidth={1.5}
-                          fillOpacity={0.3}
-                        />
+                        {stratFilter === "all" && <>
+                          <Area type="monotone" dataKey="total" name="Total P&L" stroke="#2563eb" fill="#dbeafe" strokeWidth={2} />
+                          <Area type="monotone" dataKey="realized" name="Realized" stroke="#16a34a" fill="#dcfce7" strokeWidth={1.5} fillOpacity={0.3} />
+                        </>}
+                        {stratFilter === "threshold" && <Area type="monotone" dataKey="threshold" name="Threshold Arb" stroke="#2563eb" fill="#dbeafe" strokeWidth={2} />}
+                        {stratFilter === "structural" && <Area type="monotone" dataKey="structural" name="Structural Arb" stroke="#9333ea" fill="#f3e8ff" strokeWidth={2} />}
+                        {stratFilter === "bucket" && <Area type="monotone" dataKey="bucket" name="Bucket Arb" stroke="#ea580c" fill="#ffedd5" strokeWidth={2} />}
+                        {stratFilter === "meanrev" && <Area type="monotone" dataKey="meanrev" name="Mean-Rev" stroke="#0891b2" fill="#cffafe" strokeWidth={2} />}
                       </AreaChart>
                     </ResponsiveContainer>
                   )}
@@ -1505,22 +1535,35 @@ export default function Dashboard() {
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
                   {[
-                    ["Open positions", String(openPos.length)],
-                    ["Closed positions", String(closedPos.length)],
+                    ["Open positions", String(openPos.length + openBucketPos.length + openSinglePos.length)],
+                    ["Closed positions", String(closedPos.length + closedBucketPos.length + closedSinglePos.length)],
                     ["Win rate", botState ? fmtPct(botState.win_rate) : "—"],
                     ["Total trades", String(botState?.total_trades ?? 0)],
-                    ["Refresh count", String(botState?.scan_count ?? 0)],
-                    ["Ticks received", (botState?.ticks_received ?? 0).toLocaleString()],
-                    [
-                      "Last refresh",
-                      botState?.last_scan ? timeSince(botState.last_scan) : "never",
-                    ],
+                    ["Last refresh", botState?.last_scan ? timeSince(botState.last_scan) : "never"],
                   ].map(([label, value]) => (
                     <div key={label} className="flex justify-between rounded-xl bg-slate-50 px-3 py-2">
                       <span className="text-slate-500">{label}</span>
                       <span className="font-medium">{value}</span>
                     </div>
                   ))}
+                  <div className="pt-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">By Strategy</div>
+                  {([
+                    ["Threshold", "threshold_arb"],
+                    ["Structural", "structural_arb"],
+                    ["Bucket", "bucket_arb"],
+                    ["Mean-Rev", "mispriced_leg"],
+                  ] as const).map(([label, key]) => {
+                    const st = stratStats[key];
+                    if (!st || st.count === 0) return null;
+                    return (
+                      <div key={key} className="flex justify-between rounded-xl bg-slate-50 px-3 py-2">
+                        <span className="text-slate-500">{label} <span className="text-slate-400">({st.count} trades, {st.count > 0 ? Math.round(st.wins / st.count * 100) : 0}% win)</span></span>
+                        <span className={`font-mono font-semibold ${st.pnl >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                          {st.pnl >= 0 ? "+" : ""}{st.pnl.toFixed(2)}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </CardContent>
               </Card>
             </div>

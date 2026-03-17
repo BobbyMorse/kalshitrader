@@ -198,6 +198,18 @@ class PaperTrader:
         return self._single_closed
 
     @property
+    def realized_pnl_by_strategy(self) -> dict:
+        """Per-strategy realized P&L across all closed position types."""
+        result: dict = {}
+        for p in self._closed:
+            result[p.strategy] = result.get(p.strategy, 0.0) + p.realized_pnl
+        for p in self._bucket_closed:
+            result["bucket_arb"] = result.get("bucket_arb", 0.0) + p.realized_pnl
+        for p in self._single_closed:
+            result["mispriced_leg"] = result.get("mispriced_leg", 0.0) + p.realized_pnl
+        return result
+
+    @property
     def bucket_open_positions(self) -> List[BucketPosition]:
         return list(self._bucket_open.values())
 

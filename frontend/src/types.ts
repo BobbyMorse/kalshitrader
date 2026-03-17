@@ -106,6 +106,10 @@ export interface PnlPoint {
   unrealized: number;
   total: number;
   open_positions: number;
+  threshold?: number;
+  structural?: number;
+  bucket?: number;
+  meanrev?: number;
 }
 
 export interface BucketEntry {
