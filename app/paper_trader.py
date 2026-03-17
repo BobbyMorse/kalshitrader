@@ -529,14 +529,18 @@ class PaperTrader:
 
     # ── Single-leg mispriced market ───────────────────────────────────────────
 
+    # Max size for directional single-leg bets — much smaller than arb size
+    # because there is no guaranteed payout; position is a directional bet.
+    SINGLE_LEG_MAX_SIZE = 50
+
     def execute_single_leg(self, sig: SingleLegSignal) -> Optional[SingleLegPosition]:
         """Buy YES on the single mispriced market at current ask."""
         if sig.id in self._single_positioned:
             return None
         if self.is_single_leg_cooling_off(sig.id):
             return None
-        size = min(sig.market.open_interest if sig.market.open_interest > 0 else self.max_size,
-                   self.max_size)
+        size = min(sig.market.open_interest if sig.market.open_interest > 0 else self.SINGLE_LEG_MAX_SIZE,
+                   self.SINGLE_LEG_MAX_SIZE)
         if size <= 0:
             return None
 
@@ -603,10 +607,11 @@ class PaperTrader:
                       f"bid={pos.current_bid:.2f} PnL=${pos.realized_pnl:.2f}")
                 continue
 
-            # Stop-loss: cut when bid drops to 50% of entry_bid (the bid at entry time).
-            # Using entry_bid (not entry_price/ask) prevents immediate trigger from wide
-            # bid-ask spreads — we only stop out if the market has genuinely moved against us.
-            stop_loss = pos.entry_bid * 0.50
+            # Tight stop-loss: exit if bid drops 5¢ below the bid we saw at entry.
+            # If the signal is valid the price should move TOWARD the target, not away.
+            # A 5¢ drop means the market is moving against us — cut quickly.
+            # At 50 contracts: 5¢ drop = $2.50 max loss (vs old 50% = potentially $50+).
+            stop_loss = pos.entry_bid - 0.05
             if pos.current_bid <= stop_loss:
                 loss = pos.current_bid - pos.entry_price
                 pos.realized_pnl = round(loss * pos.size, 4)
