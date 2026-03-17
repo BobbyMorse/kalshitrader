@@ -485,16 +485,23 @@ async def _refresh_markets() -> None:
 
     try:
         markets = await _client.get_markets(status="open")
-        _state["markets_fetched"] = len(markets)
+        print(f"[Markets] API returned {len(markets)} non-parlay open markets")
 
         groups = group_threshold_markets(markets)
         int_groups = group_integer_threshold_markets(markets)
         bucket_groups = group_bucket_markets(markets)
         _state["groups_found"] = len(groups) + len(int_groups) + len(bucket_groups)
 
+        # markets_fetched = threshold + bucket market count (more meaningful than raw API count)
+        _t_tickers = {tm.ticker for tms in groups.values() for tm in tms}
+        _it_tickers = {tm.ticker for tms in int_groups.values() for tm in tms}
+        _b_tickers = {bm.ticker for bms in bucket_groups.values() for bm in bms}
+        _state["markets_fetched"] = len(_t_tickers | _it_tickers | _b_tickers)
+
         # Diagnostic: show which series are covered and which big series are missed
         covered = sorted({ev.split("-")[0] for ev in groups})
-        print(f"[Markets] T-groups={len(groups)} covering series: {covered}")
+        print(f"[Markets] T-groups={len(groups)} / INT={len(int_groups)} / B={len(bucket_groups)} | "
+              f"{_state['markets_fetched']} threshold/bucket markets | series: {covered}")
         # Show sample tickers from fetched markets that have NO threshold pattern (might be missing ladders)
         _T_PAT = re.compile(r"-T[\d.]+$", re.IGNORECASE)
         non_threshold_series = {}
@@ -755,6 +762,11 @@ async def _refresh_markets() -> None:
                     if _trader.execute(sig, strategy="threshold_arb"):
                         new_count += 1
             for sig in structural:
+                # Only auto-trade structural anomalies that meet the configured edge threshold.
+                # The structural scan uses min_gross_edge=0.001 to display all genuine anomalies,
+                # but we must not trade sub-threshold signals (e.g. 2¢ gross edge with 7¢ fees = -5¢ net).
+                if sig.gross_edge < _min_edge:
+                    continue
                 if not _trader.is_positioned(sig.id):
                     if _trader.execute(sig, strategy="structural_arb"):
                         new_count += 1
