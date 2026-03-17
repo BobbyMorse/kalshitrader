@@ -181,13 +181,20 @@ class PaperTrader:
 
     @property
     def unrealized_pnl(self) -> float:
-        # For threshold/structural arb: locked expiry P&L = net_edge × size (fees included, worst-case)
-        # For bucket arb: mid-based is meaningful (exhaustive set, one pays $1)
-        # For single-leg: mark-to-bid (directional)
-        threshold_locked = sum(p.net_edge * p.size for p in self._open.values())
-        bucket_mid = sum(p.unrealized_pnl for p in self._bucket_open.values())
-        single_mid = sum(p.unrealized_pnl for p in self._single_open.values())
-        return threshold_locked + bucket_mid + single_mid
+        # Mark-to-market: current exit value for all open positions.
+        # For threshold/structural arb: lower_bid + (1 - higher_ask) - entry_cost × size
+        #   (what you'd receive selling both legs at current bid/ask right now)
+        # For bucket arb: sum(current bids) - entry_cost × size
+        # For single-leg: current_bid - entry_price × size
+        threshold_mtm = sum(p.unrealized_pnl for p in self._open.values())
+        bucket_mtm = sum(p.unrealized_pnl for p in self._bucket_open.values())
+        single_mtm = sum(p.unrealized_pnl for p in self._single_open.values())
+        return threshold_mtm + bucket_mtm + single_mtm
+
+    @property
+    def locked_pnl(self) -> float:
+        """Guaranteed minimum profit at expiry for arb positions (not dependent on early exit)."""
+        return sum(p.net_edge * p.size for p in self._open.values())
 
     @property
     def single_leg_open_positions(self) -> List[SingleLegPosition]:

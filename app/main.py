@@ -224,6 +224,7 @@ def _snapshot() -> dict:
             "ticks_received": _state["ticks_received"],
             "realized_pnl": round(realized, 4),
             "unrealized_pnl": round(unrealized, 4),
+            "locked_pnl": round(_trader.locked_pnl, 4),
             "total_pnl": round(realized + unrealized, 4),
             "open_positions": total_open,
             "closed_positions": total_closed,

@@ -12,6 +12,7 @@ export interface BotState {
   ticks_received: number;
   realized_pnl: number;
   unrealized_pnl: number;
+  locked_pnl: number;
   total_pnl: number;
   open_positions: number;
   closed_positions: number;

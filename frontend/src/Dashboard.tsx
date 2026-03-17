@@ -1110,7 +1110,8 @@ export default function Dashboard() {
 
   // Totals
   const realizedPnl = botState?.realized_pnl ?? 0;
-  const unrealizedPnl = botState?.unrealized_pnl ?? 0;
+  const unrealizedPnl = botState?.unrealized_pnl ?? 0;  // mark-to-market: exit now value
+  const lockedPnl = botState?.locked_pnl ?? 0;           // guaranteed profit at expiry
   const totalPnl = botState?.total_pnl ?? 0;
 
   return (
@@ -1221,9 +1222,9 @@ export default function Dashboard() {
                 sub={`${botState?.closed_positions ?? 0} closed`}
               />
               <PnlCard
-                label="Unrealized"
+                label="Unrealized (MTM)"
                 value={fmtPnl(unrealizedPnl)}
-                sub={`${botState?.open_positions ?? 0} open`}
+                sub={lockedPnl !== 0 ? `locked: ${fmtPnl(lockedPnl)} at expiry` : `${botState?.open_positions ?? 0} open`}
               />
               <PnlCard
                 label="Win rate"
