@@ -589,8 +589,16 @@ class PaperTrader:
             return None
         if self.is_single_leg_cooling_off(sig.id):
             return None
-        size = min(sig.market.open_interest if sig.market.open_interest > 0 else self.SINGLE_LEG_MAX_SIZE,
-                   self.SINGLE_LEG_MAX_SIZE)
+        if sig.avail_size == 0:
+            # Depth was fetched — no resting orders at ask price, skip fill
+            print(f"[PaperTrader] SKIP {sig.id}: avail_size=0 (no depth at ask)")
+            return None
+        # Use real depth if available, else fall back to OI/max (depth not yet fetched)
+        size = min(
+            sig.avail_size if sig.avail_size > 0 else
+            (sig.market.open_interest if sig.market.open_interest > 0 else self.SINGLE_LEG_MAX_SIZE),
+            self.SINGLE_LEG_MAX_SIZE,
+        )
         if size <= 0:
             return None
 

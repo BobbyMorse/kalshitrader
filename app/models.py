@@ -272,6 +272,7 @@ class SingleLegSignal:
     target_bid: float               # auto-exit when market.yes_bid reaches this
     detected_at: datetime
     adj_lower: Optional[ThresholdMarket] = None   # lower threshold neighbor (higher price)
+    avail_size: int = 0             # L2 depth at yes_ask price; 0 = no depth / not yet fetched
 
     def to_dict(self) -> dict:
         if self.adj_lower is not None:
@@ -298,6 +299,7 @@ class SingleLegSignal:
             "target_bid": round(self.target_bid, 4),
             "detected_at": self.detected_at.isoformat(),
             "event_ticker": self.market.event_ticker,
+            "avail_size": self.avail_size,
         }
         if self.adj_lower is not None:
             d["adj_lower_ticker"] = self.adj_lower.ticker

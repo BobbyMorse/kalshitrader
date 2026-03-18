@@ -334,11 +334,36 @@ async def _enrich_depths(violations: list, max_size: int) -> None:
         if v.lower_depth > 0 and v.higher_depth > 0:
             v.avail_size = min(v.lower_depth, v.higher_depth, max_size)
         elif v.lower_depth > 0 or v.higher_depth > 0:
-            # One side returned data but not the other; still cap conservatively
             v.avail_size = min(v.lower_depth or v.higher_depth, max_size)
-        # else: orderbook returned empty (no resting orders at exact price); keep OI-based estimate
+        else:
+            # API succeeded but no resting orders at exact price → unfillable at quoted price
+            v.avail_size = 0
 
     await _asyncio.gather(*[_fetch_pair(v) for v in violations])
+
+
+async def _enrich_single_leg_depths(signals: list, max_size: int) -> None:
+    """Fetch L2 YES ask depth for single-leg mean-reversion signals.
+
+    Buy YES at yes_ask → we need NO bids at (100 - yes_ask_cents).
+    Sets signal.avail_size to actual depth (0 if no resting orders at that price).
+    """
+    import asyncio as _asyncio
+
+    async def _fetch_one(sig) -> None:
+        try:
+            ob = await _client.get_orderbook(sig.market.ticker)
+        except Exception:
+            return  # API error: leave avail_size=0 (conservative — don't trade)
+        ask_c = round(sig.market.yes_ask * 100)
+        no_target = 100 - ask_c
+        depth = sum(
+            int(qty) for price, qty in ob.get("no", [])
+            if int(price) == no_target
+        )
+        sig.avail_size = min(depth, max_size)  # 0 if no resting orders at price
+
+    await _asyncio.gather(*[_fetch_one(s) for s in signals])
 
 
 # ── Real-time tick handler ────────────────────────────────────────────────────
@@ -770,6 +795,9 @@ async def _refresh_markets() -> None:
             min_gross_edge=-0.05,  # within 5¢ of being a true non-adjacent arb
             top_n=30,
         )
+        # Enrich structural anomalies with real depth (same two-leg structure as violations)
+        if structural:
+            await _enrich_depths(structural, _config["max_size"])
         _structural_anomalies.clear()
         _structural_anomalies.extend(structural)
         _structural_near_misses.clear()
@@ -779,6 +807,9 @@ async def _refresh_markets() -> None:
 
         # Ladder mean-reversion scan: find rungs cheap relative to both neighbors
         inverted = find_ladder_mean_reversion(all_groups, min_anomaly=0.05, top_n=20)
+        # Enrich with real ask-side depth before display or trading
+        if inverted:
+            await _enrich_single_leg_depths(inverted, _config["max_size"])
         _inverted_leg_signals.clear()
         _inverted_leg_signals.extend(inverted)
 
@@ -788,7 +819,8 @@ async def _refresh_markets() -> None:
                 interp = ((sig.adj_lower.mid() + sig.adj_higher.mid()) / 2
                           if sig.adj_lower else sig.adj_higher.mid())
                 print(f"  [MEAN-REV] {sig.id}: mid={sig.market.mid():.2f} "
-                      f"interp={interp:.2f} anomaly={sig.inversion:.2f}")
+                      f"interp={interp:.2f} anomaly={sig.inversion:.2f} "
+                      f"depth={sig.avail_size}")
 
         if _config["auto_trade_inverted"] and _config["auto_trade"] and _config["paper_trading"]:
             inv_new = 0
@@ -1074,6 +1106,10 @@ async def trade_structural(signal_id: str) -> dict:
     )
     if anomaly is None:
         raise HTTPException(status_code=404, detail=f"Structural signal not found: {signal_id!r}")
+    # Refresh depth at time of manual trade click
+    await _enrich_depths([anomaly], _config["max_size"])
+    if anomaly.avail_size == 0:
+        raise HTTPException(status_code=409, detail="No depth at quoted price — market may have moved")
     try:
         sig = ViolationSignal(
             id=anomaly.id,
@@ -1104,6 +1140,10 @@ async def trade_inverted(ticker: str) -> dict:
         raise HTTPException(status_code=404, detail=f"Inverted signal not found: {ticker!r}")
     if _trader.is_positioned(ticker):
         raise HTTPException(status_code=409, detail="Already positioned")
+    # Refresh depth at time of manual trade click
+    await _enrich_single_leg_depths([sig], _config["max_size"])
+    if sig.avail_size == 0:
+        raise HTTPException(status_code=409, detail="No depth at quoted ask price — market may have moved")
     try:
         pos = _trader.execute_single_leg(sig)
     except Exception as exc:

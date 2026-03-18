@@ -210,6 +210,7 @@ export interface InvertedLegSignal {
   target_bid: number;       // auto-exit when bid reaches this
   detected_at: string;
   event_ticker?: string;
+  avail_size: number;       // L2 depth at yes_ask price (0 = no depth / not fetched)
 }
 
 export interface SingleLegPosition {
