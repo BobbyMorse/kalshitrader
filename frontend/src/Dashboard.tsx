@@ -1237,7 +1237,7 @@ export default function Dashboard() {
               <PnlCard
                 label="Win rate"
                 value={botState ? fmtPct(botState.win_rate) : "—"}
-                sub={`${botState?.total_trades ?? 0} trades`}
+                sub={`${botState?.closed_positions ?? 0} closed`}
               />
             </div>
           </div>

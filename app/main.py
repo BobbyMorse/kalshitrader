@@ -234,14 +234,17 @@ def _snapshot() -> dict:
     open_pos = _trader.open_positions
     closed_pos = _trader.closed_positions
 
-    closed_with_pnl = [p for p in closed_pos if p.realized_pnl != 0]
-    wins = sum(1 for p in closed_with_pnl if p.realized_pnl > 0)
-    win_rate = wins / len(closed_with_pnl) if closed_with_pnl else 0.0
-
     bucket_open = _trader.bucket_open_positions
     bucket_closed = _trader.bucket_closed_positions
-    total_open = len(open_pos) + len(bucket_open)
-    total_closed = len(closed_pos) + len(bucket_closed)
+    single_closed = _trader.single_leg_closed_positions
+    total_open = len(open_pos) + len(bucket_open) + len(_trader.single_leg_open_positions)
+    total_closed = len(closed_pos) + len(bucket_closed) + len(single_closed)
+
+    # Win rate across ALL closed position types
+    all_closed = list(closed_pos) + list(bucket_closed) + list(single_closed)
+    closed_with_pnl = [p for p in all_closed if p.realized_pnl != 0]
+    wins = sum(1 for p in closed_with_pnl if p.realized_pnl > 0)
+    win_rate = wins / len(closed_with_pnl) if closed_with_pnl else 0.0
 
     return {
         "type": "snapshot",
