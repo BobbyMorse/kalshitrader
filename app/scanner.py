@@ -26,6 +26,7 @@ from models import (BucketMarket, BucketSumSignal, SingleLegSignal,
 
 _T_RE = re.compile(r"-T([\d.]+)$", re.IGNORECASE)
 _BARE_FLOAT_RE = re.compile(r"-(\d+\.\d+)$")    # bare decimal: KXAAAGASM-26MAR31-4.50
+_NP_RE = re.compile(r"-[NP]([\d.]+)$", re.IGNORECASE)  # N/P prefix: KXNGASMIN-26DEC31-N2.80
 _B_RE = re.compile(r"-B([\d.]+)$", re.IGNORECASE)
 _N_RE = re.compile(r"-(\d+)$")            # dash + integer: KXNBASTL-GAMEID-PLAYER-1
 _TEAM_N_RE = re.compile(r"([A-Z]{2,5})(\d+)$")  # team+integer: KXNBA1HSPREAD-...-NYK7
@@ -36,37 +37,78 @@ _PARLAY_PREFIXES = ("KXMVECROSSCATEGORY", "KXMVESPORTSMULTIGAMEEXTENDED", "KXMVE
 
 # Series that use -<integer> suffix as threshold (e.g. 1, 2, 3+ steals/blocks/goals)
 _INT_THRESHOLD_SERIES = (
+    # NBA player props
     "KXNBASTL",        # NBA steals
-    "KXNBA1HTOTAL",    # NBA 1st-half total points
-    "KXNCAAMB1HTOTAL", # NCAA Men's Basketball 1H total
     "KXNBABLK",        # NBA blocks
     "KXNBAAST",        # NBA assists
-    "KXEPLGOAL",       # EPL goals scored by player (1+, 2+)
+    "KXNBAPTS",        # NBA player points (10+, 15+, 20+)
+    "KXNBAREB",        # NBA rebounds
+    "KXNBA3PT",        # NBA 3-pointers made
+    # NBA game totals / season wins
+    "KXNBA1HTOTAL",    # NBA 1st-half total points
+    "KXNBATOTAL",      # NBA game total points
+    "KXNBADRAFTCAT",   # NBA draft category count
+    # NCAA Basketball
+    "KXNCAAMB1HTOTAL", # NCAA Men's Basketball 1H total
+    "KXNCAAMBTOTAL",   # NCAA Men's Basketball game total
+    "KXNCAAWBTOTAL",   # NCAA Women's Basketball game total
+    # NHL
     "KXNHLGOAL",       # NHL player goals (1+, 2+, 3+)
     "KXNHLPTS",        # NHL player points (1+, 2+, 3+)
     "KXNHLAST",        # NHL player assists (1+, 2+, 3+)
+    "KXNHLTOTAL",      # NHL game total goals
+    # Soccer
+    "KXEPLGOAL",       # EPL goals scored by player (1+, 2+)
+    "KXEPLTOTAL",      # EPL game total goals
+    "KXMLSTOTAL",      # MLS game total goals
+    # MLB
+    "KXMLBSTATCOUNT",  # MLB combined stat milestone counts
+    # Golf
+    "KXPGASTROKEMARGIN", # PGA stroke margin (1+, 2+, 3+ strokes ahead)
 )
 
 # Series that use <TEAM><integer> suffix as threshold (e.g. NYK7 = NYK wins 1H by 7+)
 _TEAM_N_SERIES = (
+    # NBA spreads / team totals
     "KXNBA1HSPREAD",    # NBA 1st-half point spread ladder
+    "KXNBASPREAD",      # NBA full-game point spread
+    "KXNBATEAMTOTAL",   # NBA team total points (POR135, POR132...)
+    # NCAA Basketball spreads
     "KXNCAAMB1HSPREAD", # NCAA Men's Basketball 1H spread ladder
+    "KXNCAAMBSPREAD",   # NCAA Men's Basketball full-game spread
+    "KXNCAAWBSPREAD",   # NCAA Women's Basketball spread
+    # NHL spreads
+    "KXNHLSPREAD",      # NHL goal spread
+    # Soccer spreads
+    "KXEPLSPREAD",      # EPL goal spread
+    "KXMLSSPREAD",      # MLS goal spread
 )
 
 KALSHI_FEE_RATE = 0.07  # 7% of gross winnings per resolved contract
 
 
 def _is_below_group(sorted_markets: list) -> bool:
-    """Return True if this group uses 'Below $X' semantics.
+    """Return True if this group uses 'Below $X' semantics (prices increase with threshold).
 
-    For 'Below $X' markets, P(X < threshold) *increases* with threshold,
-    so YES prices are naturally sorted low-to-high with threshold.
-    The monotonicity violation logic is reversed — treat them as invalid for
-    the 'Above' arb scanner.  Detected via yes_sub_title containing 'below'.
+    For ≥-threshold markets prices DECREASE with threshold; for below/min markets
+    they INCREASE. Detected via two data-driven checks (any one is sufficient):
+
+      1. Title keyword: yes_sub_title contains 'below', 'minimum', or 'maximum'.
+      2. Price shape: YES mid-prices increase with threshold across the majority of
+         consecutive pairs. This is the primary guard — it works regardless of how
+         the API labels the series, so no hardcoded series lists are required.
     """
     for m in sorted_markets[:3]:
         title = m.title.lower()
-        if title and "below" in title:
+        if title and ("below" in title or "minimum" in title or "maximum" in title):
+            return True
+
+    # Price-shape check: majority of consecutive mid-price pairs increase with threshold.
+    priced = [m for m in sorted_markets if m.yes_ask > 0 and m.yes_bid > 0]
+    if len(priced) >= 3:
+        mids = [(m.yes_bid + m.yes_ask) / 2 for m in priced]
+        increasing = sum(1 for i in range(len(mids) - 1) if mids[i] < mids[i + 1])
+        if increasing > len(mids) // 2:
             return True
     return False
 
@@ -76,6 +118,9 @@ def _parse_threshold(ticker: str) -> Optional[float]:
     if m:
         return float(m.group(1))
     m = _BARE_FLOAT_RE.search(ticker)
+    if m:
+        return float(m.group(1))
+    m = _NP_RE.search(ticker)
     return float(m.group(1)) if m else None
 
 
@@ -172,6 +217,8 @@ def group_threshold_markets(markets: List[dict]) -> Dict[str, List[ThresholdMark
         event_ticker = _T_RE.sub("", ticker)
         if event_ticker == ticker:  # T-prefix didn't match → bare-float suffix
             event_ticker = _BARE_FLOAT_RE.sub("", ticker)
+        if event_ticker == ticker:  # N/P prefix (KXNGASMIN/KXNGASMAX)
+            event_ticker = _NP_RE.sub("", ticker)
         series = event_ticker.split("-")[0].upper()
 
         # REST API returns yes_bid_dollars/yes_ask_dollars as string decimals (0-1 range).
