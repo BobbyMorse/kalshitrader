@@ -15,6 +15,7 @@ Strategy 2 — Bucket sum arb:
 from __future__ import annotations
 
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
@@ -407,6 +408,8 @@ def find_ladder_mean_reversion(
     groups: Dict[str, List[ThresholdMarket]],
     min_anomaly: float = 0.05,
     top_n: int = 20,
+    tick_times: Optional[Dict[str, float]] = None,
+    max_stale_s: float = 60.0,
 ) -> List[SingleLegSignal]:
     """
     Detect ladder rungs that are anomalously cheap relative to BOTH neighbors.
@@ -420,9 +423,20 @@ def find_ladder_mean_reversion(
     The trade: buy YES on the cheap rung, exit when price normalizes.
 
     min_anomaly: minimum ¢ discount vs interpolated fair value (default 5¢).
+      Dynamic floor: actual threshold = max(min_anomaly, 2 × spread).
+      Wider spreads need a larger anomaly to overcome noise (#4).
+
+    tick_times: dict of ticker → time.monotonic() of last WS tick received.
+      When provided, applies stale-quote filter: only signal when the middle
+      rung is confirmed lagging (neighbors ticked more recently than middle).
+      This eliminates false signals where the whole ladder moved together (#3).
+
+    max_stale_s: neighbor must have ticked within this many seconds to be
+      considered a live price reference (default 60s).
     """
     signals: List[SingleLegSignal] = []
     now = datetime.now(timezone.utc)
+    now_mono = time.monotonic() if tick_times is not None else 0.0
     min_ttl = timedelta(minutes=30)
 
     for event_ticker, markets in groups.items():
@@ -465,7 +479,10 @@ def find_ladder_mean_reversion(
             interp_mid = (lower_nb.mid() + upper_nb.mid()) / 2
             anomaly = interp_mid - market.mid()  # positive = market is cheap
 
-            if anomaly < min_anomaly:
+            # #4 — Dynamic anomaly threshold: require anomaly >= 2× spread so that
+            # wide-spread markets need a meaningful discount above their own noise floor.
+            dynamic_min = max(min_anomaly, 2.0 * spread)
+            if anomaly < dynamic_min:
                 continue
 
             # Target: exit when market.yes_bid closes within 2¢ of interpolated fair value
@@ -481,6 +498,24 @@ def find_ladder_mean_reversion(
             risk = (market.yes_ask - market.yes_bid) + 0.05
             if target_bid - market.yes_ask < risk:
                 continue
+
+            # #3 — Stale-quote filter: only fire when the middle rung is confirmed lagging.
+            # If tick_times are available, require:
+            #   (a) at least one neighbor has ticked recently (live price reference), AND
+            #   (b) middle rung ticked BEFORE the freshest neighbor (it hasn't caught up).
+            # If middle ticked after both neighbors it already repriced — skip.
+            if tick_times is not None:
+                lower_last = tick_times.get(lower_nb.ticker, 0.0)
+                upper_last = tick_times.get(upper_nb.ticker, 0.0)
+                middle_last = tick_times.get(market.ticker, 0.0)
+                freshest_nb = max(lower_last, upper_last)
+                if freshest_nb > 0:
+                    # Both neighbors stale? Price references are unreliable — skip.
+                    if now_mono - freshest_nb > max_stale_s:
+                        continue
+                    # Middle updated after freshest neighbor? It already repriced — skip.
+                    if middle_last >= freshest_nb:
+                        continue
 
             signals.append(SingleLegSignal(
                 id=market.ticker,

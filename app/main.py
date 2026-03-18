@@ -143,6 +143,7 @@ _state: Dict[str, Any] = {
 
 _last_group_scan: Dict[str, float] = {}   # event_ticker → last scan timestamp
 _SCAN_THROTTLE_S = 1.0                     # max 1 scan per group per second
+_tick_times: Dict[str, float] = {}        # ticker → time.monotonic() of last WS tick (stale-quote detection)
 
 _signals: List[ViolationSignal] = []
 _near_misses: List[ViolationSignal] = []          # positive edge, below trade threshold
@@ -376,6 +377,9 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
     if _state["ticks_received"] % 100 == 0:
         asyncio.create_task(_broadcast({"bot_state": {"ticks_received": _state["ticks_received"]}}))
 
+    # Record tick timestamp for stale-quote detection in mean-reversion scanner
+    _tick_times[ticker] = time.monotonic()
+
     # Update raw cache
     if ticker in _market_cache:
         _market_cache[ticker]["yes_bid"] = bid_cents
@@ -478,6 +482,7 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                     {event_ticker: group_markets},
                     min_anomaly=0.05,
                     top_n=5,
+                    tick_times=_tick_times,
                 )
                 if inverted:
                     inv_index = {s.id: i for i, s in enumerate(_inverted_leg_signals)}
@@ -806,7 +811,9 @@ async def _refresh_markets() -> None:
         )
 
         # Ladder mean-reversion scan: find rungs cheap relative to both neighbors
-        inverted = find_ladder_mean_reversion(all_groups, min_anomaly=0.05, top_n=20)
+        # Pass tick_times so the stale-quote filter can confirm middle rung is lagging.
+        inverted = find_ladder_mean_reversion(all_groups, min_anomaly=0.05, top_n=20,
+                                              tick_times=_tick_times)
         # Enrich with real ask-side depth before display or trading
         if inverted:
             await _enrich_single_leg_depths(inverted, _config["max_size"])
