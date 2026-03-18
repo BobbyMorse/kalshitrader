@@ -55,6 +55,21 @@ _TEAM_N_SERIES = (
 KALSHI_FEE_RATE = 0.07  # 7% of gross winnings per resolved contract
 
 
+def _is_below_group(sorted_markets: list) -> bool:
+    """Return True if this group uses 'Below $X' semantics.
+
+    For 'Below $X' markets, P(X < threshold) *increases* with threshold,
+    so YES prices are naturally sorted low-to-high with threshold.
+    The monotonicity violation logic is reversed — treat them as invalid for
+    the 'Above' arb scanner.  Detected via yes_sub_title containing 'below'.
+    """
+    for m in sorted_markets[:3]:
+        title = m.title.lower()
+        if title and "below" in title:
+            return True
+    return False
+
+
 def _parse_threshold(ticker: str) -> Optional[float]:
     m = _T_RE.search(ticker)
     if m:
@@ -208,6 +223,10 @@ def find_violations(
         if sorted_markets[0].expiry_dt - now < min_ttl:
             continue
 
+        # Skip "Below $X" markets — prices increase with threshold (reversed monotonicity)
+        if _is_below_group(sorted_markets):
+            continue
+
         pairs = (
             [(sorted_markets[i], sorted_markets[i + 1]) for i in range(len(sorted_markets) - 1)]
             if adjacent_only
@@ -322,6 +341,10 @@ def find_structural_anomalies(
         sorted_markets = sorted(markets, key=lambda x: x.threshold)
 
         if sorted_markets[0].expiry_dt - now < min_ttl:
+            continue
+
+        # Skip "Below $X" markets — their prices increase with threshold (reversed)
+        if _is_below_group(sorted_markets):
             continue
 
         for i in range(len(sorted_markets)):
