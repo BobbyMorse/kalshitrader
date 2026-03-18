@@ -300,8 +300,10 @@ class PaperTrader:
             lower_mid=signal.lower.yes_bid,               # sell YES at bid
             higher_no_mid=1.0 - signal.higher.yes_ask,    # exit NO = buy YES at ask
         )
-        # Initial unrealized mark (exit P&L at entry prices)
-        pos.unrealized_pnl = (pos.lower_mid + pos.higher_no_mid - pos.entry_cost) * size
+        # Initial unrealized mark (exit P&L at entry prices, fee-inclusive)
+        _gross0 = pos.lower_mid + pos.higher_no_mid
+        _gain0 = max(0.0, _gross0 - pos.entry_cost)
+        pos.unrealized_pnl = (_gross0 - pos.entry_cost - self.fee_rate * _gain0) * size
 
         self._open[pos_id] = pos
         self._positioned[signal.id] = pos_id
@@ -368,7 +370,9 @@ class PaperTrader:
             # → NO worth = 1 - yes_ask(higher). This is what a flatten would actually net.
             pos.lower_mid = lower_bid              # sell YES at bid
             pos.higher_no_mid = 1.0 - higher_ask  # exit NO = buy YES at ask
-            pos.unrealized_pnl = (pos.lower_mid + pos.higher_no_mid - pos.entry_cost) * pos.size
+            _gross = pos.lower_mid + pos.higher_no_mid
+            _gain = max(0.0, _gross - pos.entry_cost)
+            pos.unrealized_pnl = (_gross - pos.entry_cost - self.fee_rate * _gain) * pos.size
 
             # One-leg exposure warnings
             if lower_bid <= 0.02:
@@ -536,9 +540,10 @@ class PaperTrader:
             net_edge=signal.net_edge,
             entry_time=now,
         )
-        # Initial unrealized: mark at current bids
+        # Initial unrealized: mark at current bids (fee-inclusive)
         sum_bids = sum(b.yes_bid for b in signal.buckets)
-        pos.unrealized_pnl = (sum_bids - entry_cost) * size
+        _bkt_gain0 = max(0.0, sum_bids - entry_cost)
+        pos.unrealized_pnl = (sum_bids - entry_cost - self.fee_rate * _bkt_gain0) * size
 
         self._bucket_open[pos_id] = pos
         self._bucket_positioned[signal.id] = pos_id
@@ -748,7 +753,8 @@ class PaperTrader:
                         priced += 1
                         sum_bids += b
             if priced == len(pos.bucket_tickers):
-                pos.unrealized_pnl = (sum_bids - pos.entry_cost) * pos.size
+                _bkt_gain = max(0.0, sum_bids - pos.entry_cost)
+                pos.unrealized_pnl = (sum_bids - pos.entry_cost - self.fee_rate * _bkt_gain) * pos.size
 
         for pos_id in to_settle:
             self._settle_bucket(pos_id)
