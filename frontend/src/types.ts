@@ -69,6 +69,7 @@ export interface Position {
   entry_time: string;
   gross_edge: number;
   net_edge: number;
+  entry_avail_size?: number;  // L2 depth available at entry (pre-fill)
   status: string;           // "open" | "closed" | "one_leg_risk"
   strategy: string;         // "threshold_arb" | "structural_arb"
   lower_mid: number;
@@ -147,6 +148,7 @@ export interface BucketPosition {
   entry_cost: number;
   gross_edge: number;
   net_edge: number;
+  entry_avail_size?: number;  // L2 depth available at entry
   status: string;
   unrealized_pnl: number;
   realized_pnl: number;
@@ -225,6 +227,7 @@ export interface SingleLegPosition {
   entry_price: number;
   target_bid: number;
   entry_time: string;
+  entry_avail_size?: number;  // L2 depth available at entry
   status: string;           // "open" | "closed"
   strategy: string;         // "mispriced_leg"
   current_bid: number;

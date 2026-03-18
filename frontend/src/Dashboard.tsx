@@ -649,6 +649,9 @@ function PositionRow({ pos }: { pos: Position }) {
         <div className="text-[10px] text-slate-400 uppercase tracking-wide">Size</div>
         <div className="font-medium">{pos.size} cts</div>
         <div className="text-[10px] text-slate-400">cost {fmtCents(pos.entry_cost)}/pair</div>
+        {pos.entry_avail_size !== undefined && pos.entry_avail_size > 0 && (
+          <div className="text-[10px] text-slate-400">{pos.entry_avail_size} avail at entry</div>
+        )}
       </div>
 
       {/* Gross edge */}
@@ -734,6 +737,9 @@ function BucketPositionRow({ pos }: { pos: BucketPosition }) {
         <div className="text-[10px] text-slate-400 uppercase tracking-wide">Size</div>
         <div className="font-medium">{pos.size} cts</div>
         <div className="text-[10px] text-slate-400">cost {fmtCents(pos.entry_cost)}/set</div>
+        {pos.entry_avail_size !== undefined && pos.entry_avail_size > 0 && (
+          <div className="text-[10px] text-slate-400">{pos.entry_avail_size} avail at entry</div>
+        )}
       </div>
       <div>
         <div className="text-[10px] text-slate-400 uppercase tracking-wide">Entry edge</div>
@@ -800,7 +806,11 @@ function SingleLegPositionRow({ pos }: { pos: SingleLegPosition }) {
             </a>
           </div>
           <div className="mt-1 text-xs font-mono text-slate-600">
-            Long YES {pos.threshold} · {pos.size} cts · entry {fmtCents(pos.entry_price)} → target {fmtCents(pos.target_bid)}
+            Long YES {pos.threshold} · {pos.size} cts
+            {pos.entry_avail_size !== undefined && pos.entry_avail_size > 0 && (
+              <span className="text-slate-400"> ({pos.entry_avail_size} avail)</span>
+            )}
+            {" "}· entry {fmtCents(pos.entry_price)} → target {fmtCents(pos.target_bid)}
           </div>
           <div className="text-[10px] text-slate-400">
             expires {expiryIn(pos.expiry)} · entered {timeSince(pos.entry_time)}

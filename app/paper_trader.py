@@ -63,6 +63,7 @@ def _load_position(d: dict) -> Position:
         size=d["size"], lower_entry=d["lower_entry"], higher_entry=d["higher_entry"],
         entry_cost=d["entry_cost"], entry_time=datetime.fromisoformat(d["entry_time"]),
         gross_edge=d["gross_edge"], net_edge=d["net_edge"],
+        entry_avail_size=d.get("entry_avail_size", 0),
         status=d.get("status", "open"),
         strategy=d.get("strategy", "threshold_arb"),
         lower_mid=d.get("lower_mid", 0.0), higher_no_mid=d.get("higher_no_mid", 0.0),
@@ -81,6 +82,7 @@ def _load_bucket_position(d: dict) -> BucketPosition:
         size=d["size"], entry_cost=d["entry_cost"],
         gross_edge=d["gross_edge"], net_edge=d["net_edge"],
         entry_time=datetime.fromisoformat(d["entry_time"]),
+        entry_avail_size=d.get("entry_avail_size", 0),
         status=d.get("status", "open"),
         unrealized_pnl=d.get("unrealized_pnl", 0.0),
         realized_pnl=d.get("realized_pnl", 0.0), fees_paid=d.get("fees_paid", 0.0),
@@ -98,6 +100,7 @@ def _load_single_leg_position(d: dict) -> SingleLegPosition:
         entry_bid=d.get("entry_bid", entry_price * 0.5),  # old positions: use half of ask as proxy
         target_bid=d["target_bid"],
         entry_time=datetime.fromisoformat(d["entry_time"]),
+        entry_avail_size=d.get("entry_avail_size", 0),
         status=d.get("status", "open"), strategy=d.get("strategy", "mispriced_leg"),
         current_bid=d.get("current_bid", 0.0),
         unrealized_pnl=d.get("unrealized_pnl", 0.0),
@@ -295,6 +298,7 @@ class PaperTrader:
             entry_time=now,
             gross_edge=signal.gross_edge,
             net_edge=signal.net_edge,
+            entry_avail_size=signal.avail_size,
             status="open",
             strategy=strategy,
             lower_mid=signal.lower.yes_bid,               # sell YES at bid
@@ -539,6 +543,7 @@ class PaperTrader:
             gross_edge=signal.gross_edge,
             net_edge=signal.net_edge,
             entry_time=now,
+            entry_avail_size=signal.avail_size,
         )
         # Initial unrealized: mark at current bids (fee-inclusive)
         sum_bids = sum(b.yes_bid for b in signal.buckets)
@@ -618,6 +623,7 @@ class PaperTrader:
             entry_bid=sig.market.yes_bid,
             target_bid=sig.target_bid,
             entry_time=now,
+            entry_avail_size=sig.avail_size,
             current_bid=sig.market.yes_bid,
             entry_inversion=sig.inversion,
             entry_interp_mid=sig.target_bid,  # target_bid ≈ interpolated fair mid

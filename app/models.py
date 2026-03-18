@@ -106,6 +106,7 @@ class Position:
     entry_time: datetime
     gross_edge: float
     net_edge: float
+    entry_avail_size: int = 0   # L2 depth available at entry (pre-fill)
     status: str = "open"    # "open" | "closed"
     strategy: str = "threshold_arb"  # "threshold_arb" | "structural_arb"
 
@@ -137,6 +138,7 @@ class Position:
             "entry_time": self.entry_time.isoformat(),
             "gross_edge": round(self.gross_edge, 4),
             "net_edge": round(self.net_edge, 4),
+            "entry_avail_size": self.entry_avail_size,
             "status": self.status,
             "lower_mid": round(self.lower_mid, 4),
             "higher_no_mid": round(self.higher_no_mid, 4),
@@ -325,6 +327,7 @@ class SingleLegPosition:
     entry_bid: float        # yes_bid at entry — stop-loss basis (avoids spread noise)
     target_bid: float       # auto-exit when bid reaches this
     entry_time: datetime
+    entry_avail_size: int = 0       # L2 depth available at entry (pre-fill)
     status: str = "open"    # "open" | "closed"
     strategy: str = "mispriced_leg"
     current_bid: float = 0.0
@@ -355,6 +358,7 @@ class SingleLegPosition:
             "entry_bid": round(self.entry_bid, 4),
             "target_bid": round(self.target_bid, 4),
             "entry_time": self.entry_time.isoformat(),
+            "entry_avail_size": self.entry_avail_size,
             "status": self.status,
             "strategy": self.strategy,
             "current_bid": round(self.current_bid, 4),
@@ -436,6 +440,7 @@ class BucketPosition:
     gross_edge: float               # 1.0 - entry_cost
     net_edge: float                 # gross_edge - fee_rate
     entry_time: datetime
+    entry_avail_size: int = 0       # L2 depth available at entry
     status: str = "open"
     strategy: str = "bucket_arb"
     unrealized_pnl: float = 0.0
@@ -458,6 +463,7 @@ class BucketPosition:
             "entry_cost": round(self.entry_cost, 4),
             "gross_edge": round(self.gross_edge, 4),
             "net_edge": round(self.net_edge, 4),
+            "entry_avail_size": self.entry_avail_size,
             "status": self.status,
             "unrealized_pnl": round(self.unrealized_pnl, 4),
             "realized_pnl": round(self.realized_pnl, 4),
