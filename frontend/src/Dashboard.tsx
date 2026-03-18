@@ -1088,24 +1088,59 @@ export default function Dashboard() {
   const activeBucketSignals = bucketSignals.filter((s) => !positionedIds.has(s.id));
   const totalActiveSignals = activeSignals.length + activeBucketSignals.length;
 
-  // Per-strategy stats from trades array
+  const STARTING_CAPITAL = 1000;
+
+  // Per-strategy stats derived from closed positions (covers all types including single-leg)
+  type StratStat = {
+    pnl: number; count: number; wins: number; losses: number;
+    grossWins: number; grossLosses: number;
+    exitReasons: Record<string, number>;
+  };
   const stratStats = useMemo(() => {
-    const s: Record<string, { pnl: number; count: number; wins: number }> = {
-      threshold_arb: { pnl: 0, count: 0, wins: 0 },
-      structural_arb: { pnl: 0, count: 0, wins: 0 },
-      bucket_arb: { pnl: 0, count: 0, wins: 0 },
-      mispriced_leg: { pnl: 0, count: 0, wins: 0 },
+    const make = (): StratStat => ({
+      pnl: 0, count: 0, wins: 0, losses: 0,
+      grossWins: 0, grossLosses: 0, exitReasons: {},
+    });
+    const s: Record<string, StratStat> = {
+      threshold_arb: make(), structural_arb: make(),
+      bucket_arb: make(), mispriced_leg: make(),
     };
-    trades.forEach((t) => {
-      if (t.pnl === null || t.action === "OPEN") return;
-      const key = t.strategy || "threshold_arb";
-      if (!s[key]) s[key] = { pnl: 0, count: 0, wins: 0 };
-      s[key].pnl += t.pnl;
+    const all = [
+      ...closedPos.map(p => ({ pnl: p.realized_pnl, strategy: p.strategy, exit: p.exit_reason })),
+      ...closedBucketPos.map(p => ({ pnl: p.realized_pnl, strategy: p.strategy, exit: p.exit_reason })),
+      ...closedSinglePos.map(p => ({ pnl: p.realized_pnl, strategy: p.strategy, exit: p.exit_reason })),
+    ];
+    all.forEach(({ pnl, strategy, exit }) => {
+      const key = strategy || "threshold_arb";
+      if (!s[key]) s[key] = make();
+      s[key].pnl += pnl;
       s[key].count += 1;
-      if (t.pnl > 0) s[key].wins += 1;
+      if (pnl > 0) { s[key].wins += 1; s[key].grossWins += pnl; }
+      else if (pnl < 0) { s[key].losses += 1; s[key].grossLosses += Math.abs(pnl); }
+      if (exit) s[key].exitReasons[exit] = (s[key].exitReasons[exit] ?? 0) + 1;
     });
     return s;
-  }, [trades]);
+  }, [closedPos, closedBucketPos, closedSinglePos]);
+
+  // Overall profit factor
+  const overallProfitFactor = useMemo(() => {
+    const totalWins = Object.values(stratStats).reduce((a, s) => a + s.grossWins, 0);
+    const totalLoss = Object.values(stratStats).reduce((a, s) => a + s.grossLosses, 0);
+    return totalLoss === 0 ? (totalWins > 0 ? Infinity : null) : totalWins / totalLoss;
+  }, [stratStats]);
+
+  // Sharpe ratio from daily P&L snapshots (need ≥ 3 days)
+  const sharpe = useMemo(() => {
+    if (pnlHistory.length < 2) return null;
+    const days: Record<string, number> = {};
+    pnlHistory.forEach(p => { const d = p.time.slice(0, 10); days[d] = p.total; });
+    const dayKeys = Object.keys(days).sort();
+    if (dayKeys.length < 3) return null;
+    const ret = dayKeys.slice(1).map((d, i) => days[d] - days[dayKeys[i]]);
+    const mean = ret.reduce((a, b) => a + b, 0) / ret.length;
+    const std = Math.sqrt(ret.reduce((a, b) => a + (b - mean) ** 2, 0) / ret.length);
+    return std === 0 ? null : (mean / std) * Math.sqrt(252);
+  }, [pnlHistory]);
 
   // PnL chart
   const chartData = useMemo(
@@ -1550,11 +1585,25 @@ export default function Dashboard() {
                   <CardTitle>Stats</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
+                  {/* Capital row */}
+                  {(() => {
+                    const current = STARTING_CAPITAL + totalPnl;
+                    const pct = (totalPnl / STARTING_CAPITAL) * 100;
+                    return (
+                      <div className="flex justify-between rounded-xl bg-slate-50 px-3 py-2">
+                        <span className="text-slate-500">Capital</span>
+                        <span className="font-medium text-right">
+                          <span className="text-slate-400">${STARTING_CAPITAL.toLocaleString()} → </span>
+                          <span className={totalPnl >= 0 ? "text-emerald-600" : "text-rose-600"}>
+                            ${current.toFixed(2)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)
+                          </span>
+                        </span>
+                      </div>
+                    );
+                  })()}
                   {[
                     ["Open positions", String(openPos.length + openBucketPos.length + openSinglePos.length)],
                     ["Closed positions", String(closedPos.length + closedBucketPos.length + closedSinglePos.length)],
-                    ["Win rate", botState ? fmtPct(botState.win_rate) : "—"],
-                    ["Total trades", String(botState?.total_trades ?? 0)],
                     ["Last refresh", botState?.last_scan ? timeSince(botState.last_scan) : "never"],
                   ].map(([label, value]) => (
                     <div key={label} className="flex justify-between rounded-xl bg-slate-50 px-3 py-2">
@@ -1562,6 +1611,27 @@ export default function Dashboard() {
                       <span className="font-medium">{value}</span>
                     </div>
                   ))}
+                  {/* Win rate */}
+                  <div className="flex justify-between rounded-xl bg-slate-50 px-3 py-2">
+                    <span className="text-slate-500">Win rate <span className="text-slate-400">({closedPos.length + closedBucketPos.length + closedSinglePos.length} closed)</span></span>
+                    <span className="font-medium">{botState ? fmtPct(botState.win_rate) : "—"}</span>
+                  </div>
+                  {/* Profit factor */}
+                  <div className="flex justify-between rounded-xl bg-slate-50 px-3 py-2">
+                    <span className="text-slate-500">Profit factor</span>
+                    <span className={`font-medium ${overallProfitFactor === null ? "text-slate-400" : overallProfitFactor >= 1.5 ? "text-emerald-600" : overallProfitFactor >= 1 ? "text-amber-600" : "text-rose-600"}`}>
+                      {overallProfitFactor === null ? "—" : overallProfitFactor === Infinity ? "∞" : overallProfitFactor.toFixed(2)}
+                    </span>
+                  </div>
+                  {/* Sharpe */}
+                  {sharpe !== null && (
+                    <div className="flex justify-between rounded-xl bg-slate-50 px-3 py-2">
+                      <span className="text-slate-500">Sharpe (ann.)</span>
+                      <span className={`font-medium ${sharpe >= 2 ? "text-emerald-600" : sharpe >= 1 ? "text-amber-600" : "text-rose-600"}`}>
+                        {sharpe.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
                   <div className="pt-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">By Strategy</div>
                   {([
                     ["Threshold", "threshold_arb"],
@@ -1571,12 +1641,26 @@ export default function Dashboard() {
                   ] as const).map(([label, key]) => {
                     const st = stratStats[key];
                     if (!st || st.count === 0) return null;
+                    const winPct = st.count > 0 ? Math.round(st.wins / st.count * 100) : 0;
+                    const avgPnl = st.pnl / st.count;
+                    const pf = st.grossLosses === 0 ? (st.grossWins > 0 ? Infinity : null) : st.grossWins / st.grossLosses;
                     return (
-                      <div key={key} className="flex justify-between rounded-xl bg-slate-50 px-3 py-2">
-                        <span className="text-slate-500">{label} <span className="text-slate-400">({st.count} trades, {st.count > 0 ? Math.round(st.wins / st.count * 100) : 0}% win)</span></span>
-                        <span className={`font-mono font-semibold ${st.pnl >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                          {st.pnl >= 0 ? "+" : ""}{st.pnl.toFixed(2)}
-                        </span>
+                      <div key={key} className="rounded-xl bg-slate-50 px-3 py-2 space-y-1">
+                        <div className="flex justify-between">
+                          <span className="text-slate-500 font-medium">{label}</span>
+                          <span className={`font-mono font-semibold ${st.pnl >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                            {st.pnl >= 0 ? "+" : ""}{st.pnl.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-xs text-slate-400">
+                          <span>{st.count} trades · {winPct}% win · avg {avgPnl >= 0 ? "+" : ""}{avgPnl.toFixed(2)}</span>
+                          <span>PF: {pf === null ? "—" : pf === Infinity ? "∞" : pf.toFixed(2)}</span>
+                        </div>
+                        {Object.keys(st.exitReasons).length > 0 && (
+                          <div className="text-xs text-slate-400">
+                            {Object.entries(st.exitReasons).map(([r, n]) => `${r}: ${n}`).join(" · ")}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
