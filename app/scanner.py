@@ -410,6 +410,7 @@ def find_ladder_mean_reversion(
     top_n: int = 20,
     tick_times: Optional[Dict[str, float]] = None,
     max_stale_s: float = 60.0,
+    debug: bool = False,
 ) -> List[SingleLegSignal]:
     """
     Detect ladder rungs that are anomalously cheap relative to BOTH neighbors.
@@ -439,11 +440,24 @@ def find_ladder_mean_reversion(
     now_mono = time.monotonic() if tick_times is not None else 0.0
     min_ttl = timedelta(minutes=30)
 
+    # Debug counters: track why each candidate triplet was rejected
+    _dbg: dict = {} if debug else {}  # series → {reason: count}
+
+    def _dbg_inc(series: str, reason: str) -> None:
+        if not debug:
+            return
+        if series not in _dbg:
+            _dbg[series] = {}
+        _dbg[series][reason] = _dbg[series].get(reason, 0) + 1
+
     for event_ticker, markets in groups.items():
+        series = event_ticker.split("-")[0].upper()
         if len(markets) < 3:  # need at least one middle rung with two neighbors
+            _dbg_inc(series, "too_few_markets")
             continue
         sorted_markets = sorted(markets, key=lambda x: x.threshold)
         if sorted_markets[0].expiry_dt - now < min_ttl:
+            _dbg_inc(series, "expiring_soon")
             continue
 
         # Categorical market check: skip bell-curve/bucket markets masquerading as
@@ -452,6 +466,7 @@ def find_ladder_mean_reversion(
         if len(priced) >= 3:
             increasing = sum(1 for i in range(len(priced) - 1) if priced[i].yes_ask < priced[i + 1].yes_ask)
             if increasing > len(priced) // 2:
+                _dbg_inc(series, "categorical_shape")
                 continue
 
         for k in range(1, len(sorted_markets) - 1):
@@ -463,6 +478,7 @@ def find_ladder_mean_reversion(
             if (lower_nb.yes_bid <= 0 or lower_nb.yes_ask <= 0 or
                 market.yes_bid   <= 0 or market.yes_ask   <= 0 or
                 upper_nb.yes_bid <= 0 or upper_nb.yes_ask <= 0):
+                _dbg_inc(series, "no_price")
                 continue
 
             # Liquidity: middle rung must have active bid and tight spread.
@@ -470,9 +486,11 @@ def find_ladder_mean_reversion(
             # the target land below entry, guaranteeing a loss on exit.
             spread = market.yes_ask - market.yes_bid
             if market.yes_bid < 0.05 or spread > 0.15:
+                _dbg_inc(series, "middle_illiquid")
                 continue
             # Neighbors must also be liquid enough to be reliable references
             if lower_nb.yes_bid < 0.05 or upper_nb.yes_bid < 0.05:
+                _dbg_inc(series, "neighbor_illiquid")
                 continue
 
             # Interpolated fair value from both neighbors
@@ -483,6 +501,7 @@ def find_ladder_mean_reversion(
             # wide-spread markets need a meaningful discount above their own noise floor.
             dynamic_min = max(min_anomaly, 2.0 * spread)
             if anomaly < dynamic_min:
+                _dbg_inc(series, f"anomaly_too_small(need={dynamic_min:.2f},got={anomaly:.2f})")
                 continue
 
             # Target: exit when market.yes_bid closes within 2¢ of interpolated fair value
@@ -497,6 +516,7 @@ def find_ladder_mean_reversion(
             #   target_bid - yes_ask >= (yes_ask - yes_bid) + 0.05  (spread + 0.05)
             risk = (market.yes_ask - market.yes_bid) + 0.05
             if target_bid - market.yes_ask < risk:
+                _dbg_inc(series, "rr_gate")
                 continue
 
             # #3 — Stale-quote filter: only fire when the middle rung is confirmed lagging.
@@ -512,11 +532,14 @@ def find_ladder_mean_reversion(
                 if freshest_nb > 0:
                     # Both neighbors stale? Price references are unreliable — skip.
                     if now_mono - freshest_nb > max_stale_s:
+                        _dbg_inc(series, "neighbors_stale")
                         continue
                     # Middle updated after freshest neighbor? It already repriced — skip.
                     if middle_last >= freshest_nb:
+                        _dbg_inc(series, "middle_not_stale")
                         continue
 
+            _dbg_inc(series, "SIGNAL")
             signals.append(SingleLegSignal(
                 id=market.ticker,
                 series=market.series,
@@ -530,6 +553,18 @@ def find_ladder_mean_reversion(
             ))
 
     signals.sort(key=lambda s: s.inversion, reverse=True)
+
+    if debug and _dbg:
+        print("[MeanRev] Filter breakdown by series:")
+        for series_key in sorted(_dbg, key=lambda s: sum(_dbg[s].values()), reverse=True):
+            counts = _dbg[series_key]
+            total = sum(v for k, v in counts.items() if k != "SIGNAL")
+            sig_n = counts.get("SIGNAL", 0)
+            reasons = {k: v for k, v in counts.items() if k != "SIGNAL"}
+            top_reasons = sorted(reasons.items(), key=lambda x: -x[1])[:3]
+            reason_str = "  ".join(f"{k}={v}" for k, v in top_reasons)
+            print(f"  {series_key:20s} {total:4d} candidates rejected  {sig_n} signals  | {reason_str}")
+
     return signals[:top_n]
 
 

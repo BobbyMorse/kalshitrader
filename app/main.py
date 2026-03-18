@@ -812,8 +812,9 @@ async def _refresh_markets() -> None:
 
         # Ladder mean-reversion scan: find rungs cheap relative to both neighbors
         # Pass tick_times so the stale-quote filter can confirm middle rung is lagging.
+        # debug=True prints per-series filter breakdown to logs (visible in Fly.io logs).
         inverted = find_ladder_mean_reversion(all_groups, min_anomaly=0.05, top_n=20,
-                                              tick_times=_tick_times)
+                                              tick_times=_tick_times, debug=True)
         # Enrich with real ask-side depth before display or trading
         if inverted:
             await _enrich_single_leg_depths(inverted, _config["max_size"])
