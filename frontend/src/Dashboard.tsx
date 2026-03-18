@@ -785,7 +785,7 @@ function SingleLegPositionRow({ pos }: { pos: SingleLegPosition }) {
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="font-mono text-xs text-slate-400">{pos.id}</span>
             <span className="font-semibold text-slate-800">{pos.series}</span>
-            <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">INVERT</span>
+            <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">MEAN-REV</span>
             <a href={kalshiUrl(pos.ticker.replace(/-T[\d.]+$/i, "").replace(/-\d+$/, ""))}
                target="_blank" rel="noopener noreferrer"
                className="text-[10px] text-sky-500 hover:text-sky-700 flex items-center gap-0.5">
@@ -1637,11 +1637,11 @@ export default function Dashboard() {
             {openSinglePos.length > 0 && (
               <Card className="rounded-3xl shadow-sm border-orange-100">
                 <CardHeader className="flex flex-row items-center justify-between">
-                  <CardTitle className="text-orange-700">Open Inverted-Leg Positions ({openSinglePos.length})</CardTitle>
+                  <CardTitle className="text-orange-700">Open Mean-Reversion Positions ({openSinglePos.length})</CardTitle>
                   <button
                     className="text-xs bg-red-500 text-white rounded-xl px-3 py-1.5 font-semibold hover:bg-red-600"
                     onClick={async () => {
-                      if (!confirm(`Flatten all ${openSinglePos.length} open inverted-leg positions at current market prices?`)) return;
+                      if (!confirm(`Flatten all ${openSinglePos.length} open mean-reversion positions at current market prices?`)) return;
                       const res = await fetch(`${API}/inverted/flatten-all`, { method: "POST" });
                       const d = await res.json().catch(() => ({}));
                       alert(res.ok ? `Closed ${d.closed} positions, P&L: ${d.total_pnl?.toFixed(2)}` : "Failed: " + (d.detail || res.statusText));
@@ -1662,7 +1662,7 @@ export default function Dashboard() {
             {closedSinglePos.length > 0 && (
               <Card className="rounded-3xl shadow-sm border-orange-100">
                 <CardHeader>
-                  <CardTitle className="text-orange-700">Closed Inverted-Leg Positions ({closedSinglePos.length})</CardTitle>
+                  <CardTitle className="text-orange-700">Closed Mean-Reversion Positions ({closedSinglePos.length})</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
                   {[...closedSinglePos].reverse().map((p) => (

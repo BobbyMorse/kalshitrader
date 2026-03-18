@@ -638,7 +638,9 @@ class PaperTrader:
             tm = threshold_map.get(pos.ticker) or int_threshold_map.get(pos.ticker)
             if tm is not None:
                 pos.current_bid = tm.yes_bid
-            pos.unrealized_pnl = round((pos.current_bid - pos.entry_price) * pos.size, 4)
+            gain = pos.current_bid - pos.entry_price
+            fee = self.fee_rate * gain if gain > 0 else 0.0
+            pos.unrealized_pnl = round((gain - fee) * pos.size, 4)
 
             # Auto-exit: price normalized to near fair value
             if pos.current_bid >= pos.target_bid:
