@@ -331,6 +331,13 @@ class SingleLegPosition:
     exit_price: float = 0.0
     exit_time: Optional[datetime] = None
     exit_reason: str = ""
+    # Entry rationale — captured from the signal at execution time
+    entry_inversion: float = 0.0        # how many ¢ below fair value at entry
+    entry_interp_mid: float = 0.0       # interpolated fair-value mid at entry
+    entry_adj_lower_bid: float = 0.0    # lower-threshold neighbor bid at entry
+    entry_adj_higher_bid: float = 0.0   # upper-threshold neighbor bid at entry
+    entry_adj_lower_threshold: float = 0.0
+    entry_adj_higher_threshold: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -354,6 +361,12 @@ class SingleLegPosition:
             "exit_price": round(self.exit_price, 4),
             "exit_time": self.exit_time.isoformat() if self.exit_time else None,
             "exit_reason": self.exit_reason,
+            "entry_inversion": round(self.entry_inversion, 4),
+            "entry_interp_mid": round(self.entry_interp_mid, 4),
+            "entry_adj_lower_bid": round(self.entry_adj_lower_bid, 4),
+            "entry_adj_higher_bid": round(self.entry_adj_higher_bid, 4),
+            "entry_adj_lower_threshold": self.entry_adj_lower_threshold,
+            "entry_adj_higher_threshold": self.entry_adj_higher_threshold,
         }
 
 

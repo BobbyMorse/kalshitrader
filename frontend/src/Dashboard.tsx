@@ -799,6 +799,14 @@ function SingleLegPositionRow({ pos }: { pos: SingleLegPosition }) {
             expires {expiryIn(pos.expiry)} · entered {timeSince(pos.entry_time)}
             {!isOpen && pos.exit_reason && ` · ${pos.exit_reason}`}
           </div>
+          {pos.entry_inversion > 0 && (
+            <div className="text-[10px] text-orange-500/80 mt-0.5 font-mono">
+              triggered: {fmtCents(pos.entry_inversion)} below fair ({fmtCents(pos.entry_interp_mid)})
+              {pos.entry_adj_lower_threshold > 0 && pos.entry_adj_higher_threshold > 0 && (
+                <> · neighbors: {fmtCents(pos.entry_adj_lower_bid)} / {fmtCents(pos.entry_adj_higher_bid)}</>
+              )}
+            </div>
+          )}
           {isOpen && (
             <div className="mt-1.5">
               <div className="flex justify-between text-[10px] text-slate-400 mb-0.5">

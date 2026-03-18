@@ -232,6 +232,12 @@ export interface SingleLegPosition {
   exit_price: number;
   exit_time: string | null;
   exit_reason: string;
+  entry_inversion: number;
+  entry_interp_mid: number;
+  entry_adj_lower_bid: number;
+  entry_adj_higher_bid: number;
+  entry_adj_lower_threshold: number;
+  entry_adj_higher_threshold: number;
 }
 
 export interface WsMessage {

@@ -104,6 +104,12 @@ def _load_single_leg_position(d: dict) -> SingleLegPosition:
         realized_pnl=d.get("realized_pnl", 0.0),
         exit_price=d.get("exit_price", 0.0),
         exit_time=_dt(d.get("exit_time")), exit_reason=d.get("exit_reason", ""),
+        entry_inversion=d.get("entry_inversion", 0.0),
+        entry_interp_mid=d.get("entry_interp_mid", 0.0),
+        entry_adj_lower_bid=d.get("entry_adj_lower_bid", 0.0),
+        entry_adj_higher_bid=d.get("entry_adj_higher_bid", 0.0),
+        entry_adj_lower_threshold=d.get("entry_adj_lower_threshold", 0.0),
+        entry_adj_higher_threshold=d.get("entry_adj_higher_threshold", 0.0),
     )
 
 
@@ -600,6 +606,12 @@ class PaperTrader:
             target_bid=sig.target_bid,
             entry_time=now,
             current_bid=sig.market.yes_bid,
+            entry_inversion=sig.inversion,
+            entry_interp_mid=sig.target_bid,  # target_bid ≈ interpolated fair mid
+            entry_adj_lower_bid=sig.adj_lower.yes_bid if sig.adj_lower else 0.0,
+            entry_adj_higher_bid=sig.adj_higher.yes_bid,
+            entry_adj_lower_threshold=sig.adj_lower.threshold if sig.adj_lower else 0.0,
+            entry_adj_higher_threshold=sig.adj_higher.threshold,
         )
         pos.unrealized_pnl = (pos.current_bid - pos.entry_price) * size
 
