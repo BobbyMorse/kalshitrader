@@ -66,7 +66,15 @@ _trader.load()
 # ── Module-level state ────────────────────────────────────────────────────────
 # All mutable state lives in dicts/lists so mutations never need `global`.
 
-_STATE_FILE = os.environ.get("STATE_FILE", os.path.join(os.path.dirname(__file__), "trader_state.json"))
+def _resolve_state_file() -> str:
+    if os.path.isdir("/data") and os.access("/data", os.W_OK):
+        return "/data/trader_state.json"
+    env = os.environ.get("STATE_FILE", "")
+    if env and not env.startswith("C:") and not env.startswith("c:"):
+        return env
+    return os.path.join(os.path.dirname(__file__), "trader_state.json")
+
+_STATE_FILE = _resolve_state_file()
 _CONFIG_FILE = _STATE_FILE.replace("trader_state.json", "trader_config.json")
 
 _config: Dict[str, Any] = {

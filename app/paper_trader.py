@@ -121,7 +121,27 @@ def _load_trade(d: dict) -> TradeRecord:
     )
 
 KALSHI_FEE_RATE = 0.07
-STATE_FILE = os.environ.get("STATE_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "trader_state.json"))
+
+
+def _resolve_state_file() -> str:
+    """Resolve the state file path robustly.
+    Fly.io mounts a persistent volume at /data — use it if available.
+    The STATE_FILE env var can be mangled by Git Bash on Windows (turns
+    /data/... into C:/Program Files/Git/data/...) so we always prefer
+    the live /data mount check over the env var.
+    """
+    # Fly.io: persistent volume always mounted at /data
+    if os.path.isdir("/data") and os.access("/data", os.W_OK):
+        return "/data/trader_state.json"
+    # Env var fallback — reject if it looks like a mangled Windows path
+    env = os.environ.get("STATE_FILE", "")
+    if env and not env.startswith("C:") and not env.startswith("c:"):
+        return env
+    # Local dev: save next to this file
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "trader_state.json")
+
+
+STATE_FILE = _resolve_state_file()
 
 
 class PaperTrader:
