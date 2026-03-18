@@ -1242,7 +1242,7 @@ export default function Dashboard() {
               Signals {totalActiveSignals > 0 && `(${totalActiveSignals})`}
             </TabsTrigger>
             <TabsTrigger value="positions">
-              Positions {openPos.length > 0 && `(${openPos.length})`}
+              Positions {(openPos.length + openBucketPos.length + openSinglePos.length) > 0 && `(${openPos.length + openBucketPos.length + openSinglePos.length})`}
             </TabsTrigger>
             <TabsTrigger value="trades" className="relative">
               Trades
