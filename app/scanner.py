@@ -615,6 +615,140 @@ def find_ladder_mean_reversion(
     return signals[:top_n]
 
 
+def find_ladder_sell_expensive(
+    groups: Dict[str, List[ThresholdMarket]],
+    min_anomaly: float = 0.05,
+    top_n: int = 20,
+    tick_times: Optional[Dict[str, float]] = None,
+    max_stale_s: float = 60.0,
+    debug: bool = False,
+) -> List[SingleLegSignal]:
+    """
+    Detect ladder rungs that are anomalously EXPENSIVE relative to both neighbors.
+
+    For sorted ladder [..., T_{k-1}, T_k, T_{k+1}, ...]:
+      interpolated_mid = (T_{k-1}.mid() + T_{k+1}.mid()) / 2
+      anomaly = T_k.mid() - interpolated_mid  (positive → T_k is expensive)
+
+    Trade: buy NO on the expensive rung at (1 - market.yes_bid).
+    Exit:  when market.yes_ask <= interp_mid + 2¢  (stored in target_bid field).
+    Stop:  when market.yes_ask rises 5¢ above entry yes_bid.
+    """
+    signals: List[SingleLegSignal] = []
+    now = datetime.now(timezone.utc)
+    now_mono = time.monotonic() if tick_times is not None else 0.0
+    min_ttl = timedelta(minutes=30)
+
+    _dbg: dict = {} if debug else {}
+
+    def _dbg_inc(series: str, reason: str) -> None:
+        if not debug:
+            return
+        if series not in _dbg:
+            _dbg[series] = {}
+        _dbg[series][reason] = _dbg[series].get(reason, 0) + 1
+
+    for event_ticker, markets in groups.items():
+        series = event_ticker.split("-")[0].upper()
+        if len(markets) < 3:
+            _dbg_inc(series, "too_few_markets")
+            continue
+        sorted_markets = sorted(markets, key=lambda x: x.threshold)
+        if sorted_markets[0].expiry_dt - now < min_ttl:
+            _dbg_inc(series, "expiring_soon")
+            continue
+
+        priced = [m for m in sorted_markets if m.yes_ask > 0 and m.yes_bid > 0]
+        if len(priced) >= 3:
+            increasing = sum(1 for i in range(len(priced) - 1) if priced[i].yes_ask < priced[i + 1].yes_ask)
+            if increasing > len(priced) // 2:
+                _dbg_inc(series, "categorical_shape")
+                continue
+
+        for k in range(1, len(sorted_markets) - 1):
+            lower_nb = sorted_markets[k - 1]
+            market   = sorted_markets[k]
+            upper_nb = sorted_markets[k + 1]
+
+            if (lower_nb.yes_bid <= 0 or lower_nb.yes_ask <= 0 or
+                market.yes_bid   <= 0 or market.yes_ask   <= 0 or
+                upper_nb.yes_bid <= 0 or upper_nb.yes_ask <= 0):
+                _dbg_inc(series, "no_price")
+                continue
+
+            spread = market.yes_ask - market.yes_bid
+            if market.yes_bid < 0.05 or spread > 0.15:
+                _dbg_inc(series, "middle_illiquid")
+                continue
+            if lower_nb.yes_bid < 0.05 or upper_nb.yes_bid < 0.05:
+                _dbg_inc(series, "neighbor_illiquid")
+                continue
+
+            interp_mid = (lower_nb.mid() + upper_nb.mid()) / 2
+            anomaly = market.mid() - interp_mid  # positive = expensive
+
+            dynamic_min = max(min_anomaly, 2.0 * spread)
+            if anomaly < dynamic_min:
+                _dbg_inc(series, f"anomaly_too_small(need={dynamic_min:.2f},got={anomaly:.2f})")
+                continue
+
+            # Target: YES ask falls to interp_mid + 2¢
+            # (stored in target_bid field; used as YES ask target for NO positions)
+            target_ask = round(interp_mid + 0.02, 4)
+
+            # R:R gate: profit >= risk
+            # profit = yes_bid_entry - target_ask ≈ anomaly - spread/2 - 0.02
+            # risk   = spread + 0.05 (stop fires when yes_ask rises 5¢ above yes_bid)
+            profit_if_target = market.yes_bid - target_ask
+            risk = spread + 0.05
+            if profit_if_target < risk:
+                _dbg_inc(series, "rr_gate")
+                continue
+
+            # Stale-quote filter: middle ticked before neighbors → it hasn't repriced yet
+            if tick_times is not None:
+                lower_last = tick_times.get(lower_nb.ticker, 0.0)
+                upper_last = tick_times.get(upper_nb.ticker, 0.0)
+                middle_last = tick_times.get(market.ticker, 0.0)
+                freshest_nb = max(lower_last, upper_last)
+                if freshest_nb > 0:
+                    if now_mono - freshest_nb > max_stale_s:
+                        _dbg_inc(series, "neighbors_stale")
+                        continue
+                    if middle_last >= freshest_nb:
+                        _dbg_inc(series, "middle_not_stale")
+                        continue
+
+            _dbg_inc(series, "SIGNAL")
+            signals.append(SingleLegSignal(
+                id=market.ticker,
+                series=market.series,
+                expiry_dt=market.expiry_dt,
+                market=market,
+                adj_higher=upper_nb,
+                adj_lower=lower_nb,
+                inversion=round(anomaly, 4),
+                target_bid=target_ask,   # YES ask target for exit (stored in target_bid)
+                detected_at=now,
+                side="no",
+            ))
+
+    signals.sort(key=lambda s: s.inversion, reverse=True)
+
+    if debug and _dbg:
+        print("[SellExpensive] Filter breakdown by series:")
+        for series_key in sorted(_dbg, key=lambda s: sum(_dbg[s].values()), reverse=True):
+            counts = _dbg[series_key]
+            total = sum(v for k, v in counts.items() if k != "SIGNAL")
+            sig_n = counts.get("SIGNAL", 0)
+            reasons = {k: v for k, v in counts.items() if k != "SIGNAL"}
+            top_reasons = sorted(reasons.items(), key=lambda x: -x[1])[:3]
+            reason_str = "  ".join(f"{k}={v}" for k, v in top_reasons)
+            print(f"  {series_key:20s} {total:4d} candidates rejected  {sig_n} signals  | {reason_str}")
+
+    return signals[:top_n]
+
+
 # ── Bucket sum arb ────────────────────────────────────────────────────────────
 
 

@@ -32,8 +32,8 @@ from models import (BucketMarket, BucketSumSignal, SingleLegSignal,
                     StructuralAnomaly, ThresholdMarket, ViolationSignal)
 from paper_trader import PaperTrader
 from scanner import (find_bucket_violations, find_ladder_mean_reversion,
-                     find_structural_anomalies, find_violations,
-                     group_bucket_markets, group_integer_threshold_markets,
+                     find_ladder_sell_expensive, find_structural_anomalies,
+                     find_violations, group_bucket_markets, group_integer_threshold_markets,
                      group_threshold_markets)
 
 # ── App setup ─────────────────────────────────────────────────────────────────
@@ -144,6 +144,7 @@ _state: Dict[str, Any] = {
 _last_group_scan: Dict[str, float] = {}   # event_ticker → last scan timestamp
 _SCAN_THROTTLE_S = 1.0                     # max 1 scan per group per second
 _tick_times: Dict[str, float] = {}        # ticker → time.monotonic() of last WS tick (stale-quote detection)
+_broadcast_dirty: bool = False             # set by _on_tick; cleared by _broadcast_loop every 100ms
 
 _signals: List[ViolationSignal] = []
 _near_misses: List[ViolationSignal] = []          # positive edge, below trade threshold
@@ -151,6 +152,7 @@ _bucket_signals: List[BucketSumSignal] = []
 _bucket_near_misses: List[BucketSumSignal] = []   # positive edge, below trade threshold
 _structural_anomalies: List[StructuralAnomaly] = []        # non-adjacent violations (gross_edge > 0)
 _inverted_leg_signals: List[SingleLegSignal] = []          # single-leg price inversions (buy the cheap leg)
+_sell_expensive_signals: List[SingleLegSignal] = []        # single-leg sell expensive (buy NO on stale expensive rung)
 _structural_near_misses: List[StructuralAnomaly] = []     # non-adjacent near-misses (closest to arb)
 _market_cache: Dict[str, dict] = {}               # ticker → raw market dict
 _threshold_map: Dict[str, ThresholdMarket] = {}      # ticker → ThresholdMarket
@@ -209,7 +211,7 @@ def _maybe_snapshot_pnl() -> None:
         "threshold": round(_strat.get("threshold_arb", 0.0), 4),
         "structural": round(_strat.get("structural_arb", 0.0), 4),
         "bucket": round(_strat.get("bucket_arb", 0.0), 4),
-        "meanrev": round(_strat.get("mispriced_leg", 0.0), 4),
+        "meanrev": round(_strat.get("mispriced_leg", 0.0) + _strat.get("mean_rev", 0.0), 4),
     })
     # Keep capped; no disk write here (REST refresh handles persistence)
     del _pnl_history[:-500]
@@ -279,6 +281,7 @@ def _snapshot() -> dict:
         "structural_anomalies": [s.to_dict() for s in _structural_anomalies[:20]],
         "structural_near_misses": [s.to_dict() for s in _structural_near_misses[:20]],
         "inverted_legs": [s.to_dict() for s in _inverted_leg_signals],
+        "sell_expensive_legs": [s.to_dict() for s in _sell_expensive_signals],
         "positions": (
             [p.to_dict() for p in open_pos] +
             [p.to_dict() for p in closed_pos[-100:]] +
@@ -344,9 +347,10 @@ async def _enrich_depths(violations: list, max_size: int) -> None:
 
 
 async def _enrich_single_leg_depths(signals: list, max_size: int) -> None:
-    """Fetch L2 YES ask depth for single-leg mean-reversion signals.
+    """Fetch L2 depth for single-leg signals.
 
-    Buy YES at yes_ask → we need NO bids at (100 - yes_ask_cents).
+    YES side (mean_rev): buy YES at yes_ask → check NO bids at (100 - yes_ask_cents).
+    NO  side (sell_expensive): buy NO at (1 - yes_bid) → check YES bids at yes_bid_cents.
     Sets signal.avail_size to actual depth (0 if no resting orders at that price).
     """
     import asyncio as _asyncio
@@ -356,12 +360,22 @@ async def _enrich_single_leg_depths(signals: list, max_size: int) -> None:
             ob = await _client.get_orderbook(sig.market.ticker)
         except Exception:
             return  # API error: leave avail_size=0 (conservative — don't trade)
-        ask_c = round(sig.market.yes_ask * 100)
-        no_target = 100 - ask_c
-        depth = sum(
-            int(qty) for price, qty in ob.get("no", [])
-            if int(price) == no_target
-        )
+        is_no = getattr(sig, "side", "yes") == "no"
+        if is_no:
+            # Buy NO at (1 - yes_bid): need YES bids at yes_bid_cents
+            bid_c = round(sig.market.yes_bid * 100)
+            depth = sum(
+                int(qty) for price, qty in ob.get("yes", [])
+                if int(price) == bid_c
+            )
+        else:
+            # Buy YES at yes_ask: need NO bids at (100 - yes_ask_cents)
+            ask_c = round(sig.market.yes_ask * 100)
+            no_target = 100 - ask_c
+            depth = sum(
+                int(qty) for price, qty in ob.get("no", [])
+                if int(price) == no_target
+            )
         sig.avail_size = min(depth, max_size)  # 0 if no resting orders at price
 
     await _asyncio.gather(*[_fetch_one(s) for s in signals])
@@ -426,25 +440,30 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                     allow_negative_edge=True,  # paper: trade any genuine violation, fees tracked separately
                 )
                 if violations:
-                    # Fetch real L2 depth at the target prices before trading/broadcasting.
-                    await _enrich_depths(violations, _config["max_size"])
-                    sig_index = {s.id: i for i, s in enumerate(_signals)}
-                    for v in violations:
-                        print(
-                            f"[Feed] VIOLATION {v.id}: "
-                            f"edge={v.gross_edge:.3f} net={v.net_edge:.3f} "
-                            f"exp={v.expected_edge:.3f} mid_p={v.middle_prob:.2f} "
-                            f"depth={v.lower_depth}/{v.higher_depth}"
-                        )
-                        if v.id in sig_index:
-                            _signals[sig_index[v.id]] = v
-                        else:
-                            _signals.append(v)
-                    _signals.sort(key=lambda x: x.expected_edge, reverse=True)
-                    if _config["auto_trade"] and _config["paper_trading"]:
-                        for v in violations:
-                            if not _trader.is_positioned(v.id):
-                                _trader.execute(v, strategy="threshold_arb")
+                    # Enrich depth + trade in a background task so the WS receive loop
+                    # is not blocked waiting for REST HTTP responses.
+                    async def _handle_violations(vs=violations):
+                        await _enrich_depths(vs, _config["max_size"])
+                        sig_index = {s.id: i for i, s in enumerate(_signals)}
+                        for v in vs:
+                            print(
+                                f"[Feed] VIOLATION {v.id}: "
+                                f"edge={v.gross_edge:.3f} net={v.net_edge:.3f} "
+                                f"exp={v.expected_edge:.3f} mid_p={v.middle_prob:.2f} "
+                                f"depth={v.lower_depth}/{v.higher_depth}"
+                            )
+                            if v.id in sig_index:
+                                _signals[sig_index[v.id]] = v
+                            else:
+                                _signals.append(v)
+                        _signals.sort(key=lambda x: x.expected_edge, reverse=True)
+                        if _config["auto_trade"] and _config["paper_trading"]:
+                            for v in vs:
+                                if not _trader.is_positioned(v.id):
+                                    _trader.execute(v, strategy="threshold_arb")
+                        global _broadcast_dirty
+                        _broadcast_dirty = True
+                    asyncio.create_task(_handle_violations())
                     broadcast_needed = True
 
                 # ── Near-miss scan (real-time, same group, same throttle) ───────────
@@ -557,10 +576,8 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
         broadcast_needed = True
 
     if broadcast_needed:
-        _trader.update_marks(_market_cache)
-        _trader.update_marks_bucket(_market_cache)
-        _maybe_snapshot_pnl()   # add a P&L history point at most once per minute
-        await _broadcast(_snapshot())
+        global _broadcast_dirty
+        _broadcast_dirty = True
 
     # Yield to event loop so health checks and other coroutines can run
     await asyncio.sleep(0)
@@ -841,6 +858,23 @@ async def _refresh_markets() -> None:
             # Remove auto-traded signals from display list
             _inverted_leg_signals[:] = [s for s in _inverted_leg_signals if not _trader.is_positioned(s.id)]
 
+        # Sell-expensive scan: find rungs that are expensive relative to both neighbors
+        sell_exp = find_ladder_sell_expensive(all_groups, min_anomaly=0.05, top_n=20,
+                                              tick_times=_tick_times, debug=True)
+        if sell_exp:
+            await _enrich_single_leg_depths(sell_exp, _config["max_size"])
+        _sell_expensive_signals.clear()
+        _sell_expensive_signals.extend(sell_exp)
+
+        if sell_exp:
+            print(f"[Refresh] {len(sell_exp)} sell-expensive signal(s) detected")
+            for sig in sell_exp[:3]:
+                interp = ((sig.adj_lower.mid() + sig.adj_higher.mid()) / 2
+                          if sig.adj_lower else sig.adj_higher.mid())
+                print(f"  [SELL-EXP] {sig.id}: mid={sig.market.mid():.2f} "
+                      f"interp={interp:.2f} anomaly={sig.inversion:.2f} "
+                      f"depth={sig.avail_size}")
+
         best_near = f" best={near_misses[0].gross_edge:.3f}" if near_misses else ""
         print(
             f"[Refresh] {_state['markets_fetched']} markets | "
@@ -893,7 +927,7 @@ async def _refresh_markets() -> None:
             "threshold": round(_strat.get("threshold_arb", 0.0), 4),
             "structural": round(_strat.get("structural_arb", 0.0), 4),
             "bucket": round(_strat.get("bucket_arb", 0.0), 4),
-            "meanrev": round(_strat.get("mispriced_leg", 0.0), 4),
+            "meanrev": round(_strat.get("mispriced_leg", 0.0) + _strat.get("mean_rev", 0.0), 4),
         })
         _save_pnl_history()
 
@@ -917,6 +951,24 @@ async def _refresh_loop() -> None:
         await asyncio.sleep(interval)
         if _state["running"]:
             await _refresh_markets()
+
+
+async def _broadcast_loop() -> None:
+    """Flush pending tick-driven broadcasts at most 10 times per second (100ms debounce).
+
+    _on_tick sets _broadcast_dirty=True instead of awaiting _broadcast() directly.
+    This decouples tick ingestion (fast) from snapshot serialization (slow), letting
+    the WebSocket receive loop process hundreds of ticks per second without blocking.
+    """
+    global _broadcast_dirty
+    while _state["running"]:
+        await asyncio.sleep(0.1)
+        if _broadcast_dirty:
+            _broadcast_dirty = False
+            _trader.update_marks(_market_cache)
+            _trader.update_marks_bucket(_market_cache)
+            _maybe_snapshot_pnl()
+            await _broadcast(_snapshot())
 
 
 async def _pnl_snapshot_loop() -> None:
@@ -974,6 +1026,7 @@ async def startup() -> None:
         await _start_feed()
         _state["scan_task"] = asyncio.create_task(_refresh_loop())
         _state["pnl_task"] = asyncio.create_task(_pnl_snapshot_loop())
+        asyncio.create_task(_broadcast_loop())
         # Delayed rescan: WS delivers initial price snapshots within ~30s;
         # re-run full scan once those prices are populated so near misses
         # and structural anomalies appear immediately on cold start.
@@ -1152,6 +1205,26 @@ async def trade_inverted(ticker: str) -> dict:
     await _enrich_single_leg_depths([sig], _config["max_size"])
     if sig.avail_size == 0:
         raise HTTPException(status_code=409, detail="No depth at quoted ask price — market may have moved")
+    try:
+        pos = _trader.execute_single_leg(sig)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Execution error: {exc}")
+    if pos is None:
+        raise HTTPException(status_code=409, detail="Already positioned or zero size")
+    await _broadcast(_snapshot())
+    return {"ok": True, "position_id": pos.id}
+
+
+@app.post("/sell_expensive/{ticker}/trade")
+async def trade_sell_expensive(ticker: str) -> dict:
+    """Manually execute a sell-expensive NO trade on a stale overpriced rung."""
+    sig = next((s for s in _sell_expensive_signals if s.id == ticker), None)
+    if sig is None:
+        raise HTTPException(status_code=404, detail=f"Sell-expensive signal not found: {ticker!r}")
+    if _trader.is_positioned(ticker):
+        raise HTTPException(status_code=409, detail="Already positioned")
+    # Refresh depth at time of manual trade
+    await _enrich_single_leg_depths([sig], _config["max_size"])
     try:
         pos = _trader.execute_single_leg(sig)
     except Exception as exc:

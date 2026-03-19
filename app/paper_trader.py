@@ -102,6 +102,7 @@ def _load_single_leg_position(d: dict) -> SingleLegPosition:
         entry_time=datetime.fromisoformat(d["entry_time"]),
         entry_avail_size=d.get("entry_avail_size", 0),
         status=d.get("status", "open"), strategy=d.get("strategy", "mispriced_leg"),
+        side=d.get("side", "yes"),
         current_bid=d.get("current_bid", 0.0),
         unrealized_pnl=d.get("unrealized_pnl", 0.0),
         realized_pnl=d.get("realized_pnl", 0.0),
@@ -589,26 +590,41 @@ class PaperTrader:
     SINGLE_LEG_MAX_SIZE = 50
 
     def execute_single_leg(self, sig: SingleLegSignal) -> Optional[SingleLegPosition]:
-        """Buy YES on the single mispriced market at current ask."""
+        """Paper-fill a single-leg mispriced market position.
+
+        YES side (mean_rev): buy YES at yes_ask; exit when yes_bid hits target_bid.
+        NO  side (sell_expensive): buy NO at (1 - yes_bid); exit when yes_ask hits target_bid.
+        """
         if sig.id in self._single_positioned:
             return None
         if self.is_single_leg_cooling_off(sig.id):
             return None
-        if sig.avail_size == 0:
-            # Depth was fetched — no resting orders at ask price, skip fill
+
+        is_no = getattr(sig, "side", "yes") == "no"
+
+        if sig.avail_size == 0 and not is_no:
+            # For YES fills: depth was fetched — no resting orders at ask price, skip.
+            # For NO fills: we're placing a resting NO bid — skip depth check for now.
             print(f"[PaperTrader] SKIP {sig.id}: avail_size=0 (no depth at ask)")
             return None
-        # Use real depth if available, else fall back to OI/max (depth not yet fetched)
-        size = min(
-            sig.avail_size if sig.avail_size > 0 else
-            (sig.market.open_interest if sig.market.open_interest > 0 else self.SINGLE_LEG_MAX_SIZE),
-            self.SINGLE_LEG_MAX_SIZE,
-        )
+
+        size = min(max(sig.avail_size, 1), self.SINGLE_LEG_MAX_SIZE) if is_no else min(sig.avail_size, self.SINGLE_LEG_MAX_SIZE)
         if size <= 0:
             return None
 
         pos_id = str(uuid.uuid4())[:8]
         now = datetime.now(timezone.utc)
+
+        if is_no:
+            strategy = "sell_expensive"
+            entry_price = 1.0 - sig.market.yes_bid   # NO ask = 1 - yes_bid
+            entry_bid_ref = sig.market.yes_bid        # YES bid at entry (stop-loss reference)
+            current_bid_init = sig.market.yes_ask     # track YES ask for NO positions
+        else:
+            strategy = "mean_rev"
+            entry_price = sig.market.yes_ask
+            entry_bid_ref = sig.market.yes_bid
+            current_bid_init = sig.market.yes_bid
 
         pos = SingleLegPosition(
             id=pos_id,
@@ -619,29 +635,42 @@ class PaperTrader:
             threshold=sig.market.threshold,
             adj_ticker=sig.adj_higher.ticker,
             size=size,
-            entry_price=sig.market.yes_ask,
-            entry_bid=sig.market.yes_bid,
+            entry_price=entry_price,
+            entry_bid=entry_bid_ref,
             target_bid=sig.target_bid,
             entry_time=now,
             entry_avail_size=sig.avail_size,
-            current_bid=sig.market.yes_bid,
+            strategy=strategy,
+            side="no" if is_no else "yes",
+            current_bid=current_bid_init,
             entry_inversion=sig.inversion,
-            entry_interp_mid=sig.target_bid,  # target_bid ≈ interpolated fair mid
+            entry_interp_mid=sig.target_bid,
             entry_adj_lower_bid=sig.adj_lower.yes_bid if sig.adj_lower else 0.0,
             entry_adj_higher_bid=sig.adj_higher.yes_bid,
             entry_adj_lower_threshold=sig.adj_lower.threshold if sig.adj_lower else 0.0,
             entry_adj_higher_threshold=sig.adj_higher.threshold,
         )
-        pos.unrealized_pnl = (pos.current_bid - pos.entry_price) * size
+        if is_no:
+            # P&L = yes_bid_entry - yes_ask_now (current_bid stores yes_ask for NO pos)
+            pos.unrealized_pnl = (pos.entry_bid - pos.current_bid) * size
+        else:
+            pos.unrealized_pnl = (pos.current_bid - pos.entry_price) * size
 
         self._single_open[pos_id] = pos
         self._single_positioned[sig.id] = pos_id
 
-        print(
-            f"[PaperTrader] OPEN SINGLE-LEG {pos_id}: "
-            f"{sig.market.ticker} YES@{sig.market.yes_ask:.2f} "
-            f"inversion={sig.inversion:.2f} target={sig.target_bid:.2f} size={size}"
-        )
+        if is_no:
+            print(
+                f"[PaperTrader] OPEN SINGLE-LEG {pos_id} [{strategy}]: "
+                f"{sig.market.ticker} NO@{entry_price:.2f} (yes_bid={sig.market.yes_bid:.2f}) "
+                f"anomaly={sig.inversion:.2f} target_ask={sig.target_bid:.2f} size={size}"
+            )
+        else:
+            print(
+                f"[PaperTrader] OPEN SINGLE-LEG {pos_id} [{strategy}]: "
+                f"{sig.market.ticker} YES@{sig.market.yes_ask:.2f} "
+                f"inversion={sig.inversion:.2f} target={sig.target_bid:.2f} size={size}"
+            )
         self.save()
         return pos
 
@@ -654,16 +683,31 @@ class PaperTrader:
         now = datetime.now(timezone.utc)
 
         for pos in list(self._single_open.values()):
+            is_no = getattr(pos, "side", "yes") == "no"
             tm = threshold_map.get(pos.ticker) or int_threshold_map.get(pos.ticker)
             if tm is not None:
-                pos.current_bid = tm.yes_bid
-            gain = pos.current_bid - pos.entry_price
+                # NO positions: track YES ask (current value = 1 - yes_ask)
+                # YES positions: track YES bid (current value)
+                pos.current_bid = tm.yes_ask if is_no else tm.yes_bid
+
+            if is_no:
+                # P&L = yes_bid_entry - yes_ask_now  (current_bid holds yes_ask for NO pos)
+                gain = pos.entry_bid - pos.current_bid
+            else:
+                gain = pos.current_bid - pos.entry_price
             fee = self.fee_rate * gain if gain > 0 else 0.0
             pos.unrealized_pnl = round((gain - fee) * pos.size, 4)
 
             # Auto-exit: price normalized to near fair value
-            if pos.current_bid >= pos.target_bid:
-                gain = pos.current_bid - pos.entry_price
+            if is_no:
+                target_hit = pos.current_bid <= pos.target_bid   # yes_ask fell to target
+            else:
+                target_hit = pos.current_bid >= pos.target_bid   # yes_bid rose to target
+            if target_hit:
+                if is_no:
+                    gain = pos.entry_bid - pos.current_bid
+                else:
+                    gain = pos.current_bid - pos.entry_price
                 fee = self.fee_rate * gain if gain > 0 else 0.0
                 pos.realized_pnl = round((gain - fee) * pos.size, 4)
                 pos.exit_price = pos.current_bid
@@ -675,17 +719,22 @@ class PaperTrader:
                 self._single_closed.append(pos)
                 self._single_positioned.pop(pos.signal_id, None)
                 auto_closed.append(pos.id)
-                print(f"[PaperTrader] AUTO-CLOSE SINGLE-LEG {pos.id}: "
-                      f"bid={pos.current_bid:.2f} PnL=${pos.realized_pnl:.2f}")
+                print(f"[PaperTrader] AUTO-CLOSE SINGLE-LEG {pos.id} [{pos.strategy}]: "
+                      f"{'yes_ask' if is_no else 'bid'}={pos.current_bid:.2f} PnL=${pos.realized_pnl:.2f}")
                 continue
 
-            # Tight stop-loss: exit if bid drops 5¢ below the bid we saw at entry.
-            # If the signal is valid the price should move TOWARD the target, not away.
-            # A 5¢ drop means the market is moving against us — cut quickly.
-            # At 50 contracts: 5¢ drop = $2.50 max loss (vs old 50% = potentially $50+).
-            stop_loss = pos.entry_bid - 0.05
-            if pos.current_bid <= stop_loss:
-                loss = pos.current_bid - pos.entry_price
+            # Tight stop-loss:
+            #   YES pos: exit if yes_bid drops 5¢ below entry_bid
+            #   NO  pos: exit if yes_ask rises 5¢ above entry_bid (entry YES bid)
+            if is_no:
+                stop_hit = pos.current_bid >= pos.entry_bid + 0.05
+            else:
+                stop_hit = pos.current_bid <= pos.entry_bid - 0.05
+            if stop_hit:
+                if is_no:
+                    loss = pos.entry_bid - pos.current_bid  # negative = loss
+                else:
+                    loss = pos.current_bid - pos.entry_price
                 pos.realized_pnl = round(loss * pos.size, 4)
                 pos.exit_price = pos.current_bid
                 pos.exit_time = now
@@ -698,15 +747,17 @@ class PaperTrader:
                 # Cooldown: block re-entry for 2 hours to prevent feedback loop
                 self._single_cooldown[pos.signal_id] = now + timedelta(hours=2)
                 auto_closed.append(pos.id)
-                print(f"[PaperTrader] STOP-LOSS SINGLE-LEG {pos.id}: "
-                      f"bid={pos.current_bid:.2f} entry_bid={pos.entry_bid:.2f} "
-                      f"entry_ask={pos.entry_price:.2f} PnL=${pos.realized_pnl:.2f} "
-                      f"(cooldown 2h)")
+                print(f"[PaperTrader] STOP-LOSS SINGLE-LEG {pos.id} [{pos.strategy}]: "
+                      f"{'yes_ask' if is_no else 'bid'}={pos.current_bid:.2f} "
+                      f"entry_ref={pos.entry_bid:.2f} PnL=${pos.realized_pnl:.2f} (cooldown 2h)")
                 continue
 
             # Expire
             if pos.expiry_dt <= now:
-                gain = pos.current_bid - pos.entry_price
+                if is_no:
+                    gain = pos.entry_bid - pos.current_bid
+                else:
+                    gain = pos.current_bid - pos.entry_price
                 fee = self.fee_rate * gain if gain > 0 else 0.0
                 pos.realized_pnl = round((gain - fee) * pos.size, 4)
                 pos.exit_price = pos.current_bid
@@ -725,11 +776,15 @@ class PaperTrader:
         return auto_closed
 
     def flatten_single_leg(self, pos_id: str) -> Optional[SingleLegPosition]:
-        """Manually close a single-leg position at current bid."""
+        """Manually close a single-leg position at current market price."""
         pos = self._single_open.get(pos_id)
         if pos is None:
             return None
-        gain = pos.current_bid - pos.entry_price
+        is_no = getattr(pos, "side", "yes") == "no"
+        if is_no:
+            gain = pos.entry_bid - pos.current_bid  # yes_bid_entry - yes_ask_now
+        else:
+            gain = pos.current_bid - pos.entry_price
         fee = self.fee_rate * gain if gain > 0 else 0.0
         pos.realized_pnl = round((gain - fee) * pos.size, 4)
         pos.exit_price = pos.current_bid

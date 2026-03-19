@@ -122,7 +122,9 @@ class KalshiFeed:
                         # Convert to integer cents
                         bid = round(float(bid_d) * 100) if isinstance(bid_d, str) else int(bid_d)
                         ask = round(float(ask_d) * 100) if isinstance(ask_d, str) else int(ask_d)
-                        await self._on_tick(ticker, bid, ask)
+                        # Fire-and-forget: don't block the receive loop waiting for
+                        # scanning/broadcasting. The _broadcast_loop flushes at 10 Hz.
+                        asyncio.create_task(self._on_tick(ticker, bid, ask))
 
                 elif mtype == "subscribed":
                     print(f"[KalshiFeed] Subscription confirmed (raw): {str(msg)[:400]}")

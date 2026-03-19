@@ -274,7 +274,8 @@ class SingleLegSignal:
     target_bid: float               # auto-exit when market.yes_bid reaches this
     detected_at: datetime
     adj_lower: Optional[ThresholdMarket] = None   # lower threshold neighbor (higher price)
-    avail_size: int = 0             # L2 depth at yes_ask price; 0 = no depth / not yet fetched
+    avail_size: int = 0             # L2 depth at entry price; 0 = no depth / not yet fetched
+    side: str = "yes"               # "yes" = buy YES (mean-rev); "no" = buy NO (sell expensive)
 
     def to_dict(self) -> dict:
         if self.adj_lower is not None:
@@ -302,6 +303,7 @@ class SingleLegSignal:
             "detected_at": self.detected_at.isoformat(),
             "event_ticker": self.market.event_ticker,
             "avail_size": self.avail_size,
+            "side": self.side,
         }
         if self.adj_lower is not None:
             d["adj_lower_ticker"] = self.adj_lower.ticker
@@ -330,7 +332,8 @@ class SingleLegPosition:
     entry_avail_size: int = 0       # L2 depth available at entry (pre-fill)
     status: str = "open"    # "open" | "closed"
     strategy: str = "mispriced_leg"
-    current_bid: float = 0.0
+    side: str = "yes"               # "yes" = long YES; "no" = long NO (sell expensive)
+    current_bid: float = 0.0       # YES bid (YES pos) or YES ask (NO pos) — see update_single_leg_marks
     unrealized_pnl: float = 0.0
     realized_pnl: float = 0.0
     exit_price: float = 0.0
@@ -361,6 +364,7 @@ class SingleLegPosition:
             "entry_avail_size": self.entry_avail_size,
             "status": self.status,
             "strategy": self.strategy,
+            "side": self.side,
             "current_bid": round(self.current_bid, 4),
             "unrealized_pnl": round(self.unrealized_pnl, 4),
             "realized_pnl": round(self.realized_pnl, 4),

@@ -207,12 +207,13 @@ export interface InvertedLegSignal {
   adj_lower_ask?: number;
   adj_lower_bid?: number;
   // Signal quality
-  inversion: number;        // anomaly: interpolated_mid - market.mid() (>0 = cheap)
+  inversion: number;        // anomaly: |interp_mid - market.mid()| (>0 = cheap or expensive)
   interp_mid: number;       // interpolated fair value from both neighbors
-  target_bid: number;       // auto-exit when bid reaches this
+  target_bid: number;       // YES-side: target yes_bid; NO-side: target yes_ask (exit trigger)
   detected_at: string;
   event_ticker?: string;
-  avail_size: number;       // L2 depth at yes_ask price (0 = no depth / not fetched)
+  avail_size: number;       // L2 depth at entry price (0 = no depth / not fetched)
+  side?: string;            // "yes" = buy YES (mean-rev); "no" = buy NO (sell expensive)
 }
 
 export interface SingleLegPosition {
@@ -229,8 +230,9 @@ export interface SingleLegPosition {
   entry_time: string;
   entry_avail_size?: number;  // L2 depth available at entry
   status: string;           // "open" | "closed"
-  strategy: string;         // "mispriced_leg"
-  current_bid: number;
+  strategy: string;         // "mispriced_leg" | "mean_rev" | "sell_expensive"
+  side?: string;            // "yes" | "no"
+  current_bid: number;      // YES bid (YES pos) or YES ask (NO pos)
   unrealized_pnl: number;
   realized_pnl: number;
   exit_price: number;
@@ -255,6 +257,7 @@ export interface WsMessage {
   structural_anomalies?: StructuralAnomaly[];
   structural_near_misses?: StructuralAnomaly[];
   inverted_legs?: InvertedLegSignal[];
+  sell_expensive_legs?: InvertedLegSignal[];
   positions?: (Position | BucketPosition | SingleLegPosition)[];
   trades?: TradeRecord[];
   pnl_history?: PnlPoint[];
