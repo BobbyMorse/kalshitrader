@@ -84,8 +84,8 @@ _config: Dict[str, Any] = {
     "refresh_interval": 300,   # seconds between full REST refreshes
     "auto_trade": True,
     "paper_trading": True,
-    "auto_trade_inverted": False,
-    "_v": 4,
+    "auto_trade_inverted": True,
+    "_v": 5,
 }
 
 def _load_config() -> None:
@@ -98,12 +98,8 @@ def _load_config() -> None:
         for k, v in saved.items():
             if k in _config:
                 _config[k] = v
-        # Migration v3: auto_trade_inverted caused a stop-loss feedback loop on illiquid markets.
-        # Migration v4: mean-reversion strategy replaced inverted-leg; disable auto-trading until
-        # new signals are validated (wide-spread markets caused target < entry = guaranteed losses).
-        if saved.get("_v", 1) < 4:
-            _config["auto_trade_inverted"] = False
-            _config["_v"] = 4
+        # v5: auto_trade_inverted now defaults True (strategy validated); no forced override.
+        _config["_v"] = 5
         print(f"[Config] Loaded from {_CONFIG_FILE}: {saved}")
     except Exception as e:
         print(f"[Config] Failed to load {_CONFIG_FILE}: {e}")

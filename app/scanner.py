@@ -544,25 +544,16 @@ def find_ladder_mean_reversion(
             interp_mid = (lower_nb.mid() + upper_nb.mid()) / 2
             anomaly = interp_mid - market.mid()  # positive = market is cheap
 
-            # #4 — Dynamic anomaly threshold: require anomaly >= 2× spread so that
-            # wide-spread markets need a meaningful discount above their own noise floor.
-            dynamic_min = max(min_anomaly, 2.0 * spread)
-            if anomaly < dynamic_min:
-                _dbg_inc(series, f"anomaly_too_small(need={dynamic_min:.2f},got={anomaly:.2f})")
+            # Anomaly threshold: flat minimum, no spread multiplier.
+            if anomaly < min_anomaly:
+                _dbg_inc(series, f"anomaly_too_small(need={min_anomaly:.2f},got={anomaly:.2f})")
                 continue
 
             # Target: exit when market.yes_bid closes within 2¢ of interpolated fair value
             target_bid = round(interp_mid - 0.02, 4)
 
-            # Risk/reward gate: profit potential must cover the stop-loss risk.
-            # Stop fires when bid drops 5¢ below entry bid:
-            #   max_loss_per_contract = (entry_bid - 0.05) - entry_ask = -(spread + 0.05)
-            # Profit if target hit:
-            #   profit_per_contract = target_bid - entry_ask
-            # Require profit >= risk (1:1 or better):
-            #   target_bid - yes_ask >= (yes_ask - yes_bid) + 0.05  (spread + 0.05)
-            risk = (market.yes_ask - market.yes_bid) + 0.05
-            if target_bid - market.yes_ask < risk:
+            # Require at least 2¢ profit if target is hit (basic sanity check).
+            if target_bid - market.yes_ask < 0.02:
                 _dbg_inc(series, "rr_gate")
                 continue
 
@@ -687,21 +678,17 @@ def find_ladder_sell_expensive(
             interp_mid = (lower_nb.mid() + upper_nb.mid()) / 2
             anomaly = market.mid() - interp_mid  # positive = expensive
 
-            dynamic_min = max(min_anomaly, 2.0 * spread)
-            if anomaly < dynamic_min:
-                _dbg_inc(series, f"anomaly_too_small(need={dynamic_min:.2f},got={anomaly:.2f})")
+            if anomaly < min_anomaly:
+                _dbg_inc(series, f"anomaly_too_small(need={min_anomaly:.2f},got={anomaly:.2f})")
                 continue
 
             # Target: YES ask falls to interp_mid + 2¢
             # (stored in target_bid field; used as YES ask target for NO positions)
             target_ask = round(interp_mid + 0.02, 4)
 
-            # R:R gate: profit >= risk
-            # profit = yes_bid_entry - target_ask ≈ anomaly - spread/2 - 0.02
-            # risk   = spread + 0.05 (stop fires when yes_ask rises 5¢ above yes_bid)
+            # Require at least 2¢ profit if target is hit (basic sanity check).
             profit_if_target = market.yes_bid - target_ask
-            risk = spread + 0.05
-            if profit_if_target < risk:
+            if profit_if_target < 0.02:
                 _dbg_inc(series, "rr_gate")
                 continue
 
