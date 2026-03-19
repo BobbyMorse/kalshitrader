@@ -611,13 +611,11 @@ class PaperTrader:
 
         is_no = getattr(sig, "side", "yes") == "no"
 
-        if sig.avail_size == 0 and not is_no:
-            # For YES fills: depth was fetched — no resting orders at ask price, skip.
-            # For NO fills: we're placing a resting NO bid — skip depth check for now.
-            print(f"[PaperTrader] SKIP {sig.id}: avail_size=0 (no depth at ask)")
-            return None
-
-        size = min(max(sig.avail_size, 1), self.SINGLE_LEG_MAX_SIZE) if is_no else min(sig.avail_size, self.SINGLE_LEG_MAX_SIZE)
+        # In paper trading, avail_size=0 means depth was unverifiable (stale price or
+        # format mismatch), not that the market is empty. Default to a conservative size.
+        DEFAULT_SIZE = 10
+        known_depth = sig.avail_size if sig.avail_size > 0 else DEFAULT_SIZE
+        size = min(known_depth, self.SINGLE_LEG_MAX_SIZE)
         if size <= 0:
             return None
 
