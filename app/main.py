@@ -355,33 +355,37 @@ async def _enrich_single_leg_depths(signals: list, max_size: int) -> None:
     """
     import asyncio as _asyncio
 
+    _debug_logged: set = set()
+
     async def _fetch_one(sig) -> None:
         try:
             ob = await _client.get_orderbook(sig.market.ticker)
         except Exception:
-            return  # API error: leave avail_size=0 (conservative — don't trade)
+            return
+
+        # Log raw format once per ticker so we can verify price format
+        if sig.market.ticker not in _debug_logged:
+            _debug_logged.add(sig.market.ticker)
+            print(f"[OBDebug] {sig.market.ticker} ask={sig.market.yes_ask:.2f} "
+                  f"yes[:3]={ob.get('yes',[])[:3]} no[:3]={ob.get('no',[])[:3]}")
+
         def _pc(p) -> int:
-            """Convert orderbook price to integer cents (handles both decimal 0-1 and int 1-99)."""
             f = float(p)
             return round(f * 100) if f < 1 else int(f)
 
         is_no = getattr(sig, "side", "yes") == "no"
         if is_no:
-            # Buy NO at (1 - yes_bid): need YES bids at yes_bid_cents
             bid_c = round(sig.market.yes_bid * 100)
-            depth = sum(
-                int(qty) for price, qty in ob.get("yes", [])
-                if _pc(price) == bid_c
-            )
+            depth = sum(int(qty) for price, qty in ob.get("yes", []) if _pc(price) == bid_c)
         else:
-            # Buy YES at yes_ask: need NO bids at (100 - yes_ask_cents)
             ask_c = round(sig.market.yes_ask * 100)
             no_target = 100 - ask_c
-            depth = sum(
-                int(qty) for price, qty in ob.get("no", [])
-                if _pc(price) == no_target
-            )
-        sig.avail_size = min(depth, max_size)  # 0 if no resting orders at price
+            # Primary: NO bids at complementary price (standard Kalshi format)
+            depth = sum(int(qty) for price, qty in ob.get("no", []) if _pc(price) == no_target)
+            if depth == 0:
+                # Fallback: YES asks stored directly in yes key (some API versions)
+                depth = sum(int(qty) for price, qty in ob.get("yes", []) if _pc(price) == ask_c)
+        sig.avail_size = min(depth, max_size)
 
     await _asyncio.gather(*[_fetch_one(s) for s in signals])
 
