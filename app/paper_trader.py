@@ -66,6 +66,7 @@ def _load_position(d: dict) -> Position:
         entry_avail_size=d.get("entry_avail_size", 0),
         status=d.get("status", "open"),
         strategy=d.get("strategy", "threshold_arb"),
+        middle_prob=d.get("middle_prob", 0.0),
         lower_mid=d.get("lower_mid", 0.0), higher_no_mid=d.get("higher_no_mid", 0.0),
         unrealized_pnl=d.get("unrealized_pnl", 0.0),
         realized_pnl=d.get("realized_pnl", 0.0), fees_paid=d.get("fees_paid", 0.0),
@@ -299,6 +300,7 @@ class PaperTrader:
             entry_time=now,
             gross_edge=signal.gross_edge,
             net_edge=signal.net_edge,
+            middle_prob=signal.middle_prob,
             entry_avail_size=signal.avail_size,
             status="open",
             strategy=strategy,
@@ -334,11 +336,12 @@ class PaperTrader:
             strategy=strategy,
         ))
 
+        ev = signal.net_edge + signal.middle_prob * (1.0 - self.fee_rate)
         print(
             f"[PaperTrader] OPEN {pos_id} [{strategy}]: "
             f"{signal.lower.ticker} YES@{signal.lower.yes_ask:.2f} + "
             f"{signal.higher.ticker} NO@{1-signal.higher.yes_bid:.2f} | "
-            f"edge={signal.gross_edge:.3f} size={size}"
+            f"edge={signal.gross_edge:.3f} mid_p={signal.middle_prob:.2f} EV={ev:.3f} size={size}"
         )
         self.save()
         return pos
@@ -405,21 +408,26 @@ class PaperTrader:
 
     def _settle_expired(self, pos_id: str) -> None:
         """
-        Settle a position at expiry.
+        Settle a position at expiry using expected-value accounting.
 
-        In paper trading we use the worst-case guaranteed outcome:
-          - At least one leg pays $1 (guaranteed by the arb structure).
-          - Worst case: exactly one leg wins → payout = $1 per contract pair.
-          - Fee: 7% of $1 = $0.07 per contract pair.
+        Three payout scenarios:
+          1. X < T_lower or X >= T_upper:  exactly one leg wins → payout $1, fee $0.07
+          2. T_lower ≤ X < T_upper (middle band): both legs win → payout $2, fee $0.14
 
-        Realized PnL per contract = $1 - entry_cost - $0.07 = gross_edge - $0.07 = net_edge.
+        EV per contract = net_edge + middle_prob × (1 - fee_rate)
+          where net_edge covers scenario 1 and middle_prob × 0.93 covers the bonus from scenario 2.
+
+        Over many trades this EV settlement converges to the true realized average,
+        unlike always using net_edge (which systematically understates P&L).
         """
         pos = self._open.pop(pos_id, None)
         if pos is None:
             return
 
-        fee_per_contract = self.fee_rate * 1.0   # 7% on the $1 that wins
-        realized = pos.net_edge * pos.size        # (gross_edge - fee_rate) * size
+        # EV settlement: guaranteed one-leg profit + expected middle-band bonus
+        middle_bonus = pos.middle_prob * (1.0 - self.fee_rate)  # extra $1 payout net of extra fee
+        realized = (pos.net_edge + middle_bonus) * pos.size
+        fee_per_contract = self.fee_rate * (1.0 + pos.middle_prob)  # expected fees across scenarios
 
         pos.realized_pnl = realized
         pos.fees_paid = fee_per_contract * pos.size
@@ -452,7 +460,8 @@ class PaperTrader:
             strategy=pos.strategy,
         ))
 
-        print(f"[PaperTrader] SETTLE {pos.id} (expired): PnL=${realized:.2f}")
+        print(f"[PaperTrader] SETTLE {pos.id} (expired): PnL=${realized:.2f} "
+              f"(net_edge={pos.net_edge:.3f} mid_p={pos.middle_prob:.2f})")
         self.save()
 
     # ── Manual flatten ────────────────────────────────────────────────────────

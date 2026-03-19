@@ -109,6 +109,9 @@ class Position:
     entry_avail_size: int = 0   # L2 depth available at entry (pre-fill)
     status: str = "open"    # "open" | "closed"
     strategy: str = "threshold_arb"  # "threshold_arb" | "structural_arb"
+    # Middle-band probability at entry (market-implied P(both legs win))
+    # EV per contract = net_edge + middle_prob × (1 - fee_rate)
+    middle_prob: float = 0.0
 
     # Mark-to-market
     lower_mid: float = 0.0
@@ -138,6 +141,7 @@ class Position:
             "entry_time": self.entry_time.isoformat(),
             "gross_edge": round(self.gross_edge, 4),
             "net_edge": round(self.net_edge, 4),
+            "middle_prob": round(self.middle_prob, 4),
             "entry_avail_size": self.entry_avail_size,
             "status": self.status,
             "lower_mid": round(self.lower_mid, 4),
