@@ -535,9 +535,16 @@ def find_ladder_mean_reversion(
             if market.yes_bid < 0.05 or spread > 0.15:
                 _dbg_inc(series, "middle_illiquid")
                 continue
-            # Neighbors must also be liquid enough to be reliable references
+            # Neighbors must also be liquid enough to be reliable references.
+            # A wide neighbor spread (>15¢) means its mid is unreliable and will
+            # create false anomalies (e.g. stale 27¢/94¢ quote inflates interp_mid).
+            nb_spread_lower = lower_nb.yes_ask - lower_nb.yes_bid
+            nb_spread_upper = upper_nb.yes_ask - upper_nb.yes_bid
             if lower_nb.yes_bid < 0.05 or upper_nb.yes_bid < 0.05:
                 _dbg_inc(series, "neighbor_illiquid")
+                continue
+            if nb_spread_lower > 0.15 or nb_spread_upper > 0.15:
+                _dbg_inc(series, "neighbor_wide_spread")
                 continue
 
             # Interpolated fair value from both neighbors
@@ -671,8 +678,13 @@ def find_ladder_sell_expensive(
             if market.yes_bid < 0.05 or spread > 0.15:
                 _dbg_inc(series, "middle_illiquid")
                 continue
+            nb_spread_lower = lower_nb.yes_ask - lower_nb.yes_bid
+            nb_spread_upper = upper_nb.yes_ask - upper_nb.yes_bid
             if lower_nb.yes_bid < 0.05 or upper_nb.yes_bid < 0.05:
                 _dbg_inc(series, "neighbor_illiquid")
+                continue
+            if nb_spread_lower > 0.15 or nb_spread_upper > 0.15:
+                _dbg_inc(series, "neighbor_wide_spread")
                 continue
 
             interp_mid = (lower_nb.mid() + upper_nb.mid()) / 2
