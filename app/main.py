@@ -1212,8 +1212,10 @@ async def trade_inverted(ticker: str) -> dict:
         raise HTTPException(status_code=409, detail="Already positioned")
     # Re-check depth at current price before executing
     await _enrich_single_leg_depths([sig], _config["max_size"])
-    if sig.avail_size == 0:
-        raise HTTPException(status_code=409, detail="No depth at quoted ask price — market may have moved")
+    if sig.avail_size < 10:
+        detail = (f"Only {sig.avail_size} contracts at ask (min 10)" if sig.avail_size > 0
+                  else "No depth data at ask — orderbook unavailable")
+        raise HTTPException(status_code=409, detail=detail)
     try:
         pos = _trader.execute_single_leg(sig)
     except Exception as exc:
@@ -1234,6 +1236,10 @@ async def trade_sell_expensive(ticker: str) -> dict:
         raise HTTPException(status_code=409, detail="Already positioned")
     # Refresh depth at time of manual trade
     await _enrich_single_leg_depths([sig], _config["max_size"])
+    if sig.avail_size < 10:
+        detail = (f"Only {sig.avail_size} contracts at bid (min 10)" if sig.avail_size > 0
+                  else "No depth data at bid — orderbook unavailable")
+        raise HTTPException(status_code=409, detail=detail)
     try:
         pos = _trader.execute_single_leg(sig)
     except Exception as exc:

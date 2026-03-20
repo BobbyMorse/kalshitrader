@@ -559,9 +559,17 @@ class KalshiClient:
                 resp = await client.get(self._url(endpoint), headers=headers)
                 if resp.status_code == 200:
                     raw = resp.json()
-                    if "orderbook" not in raw:
-                        print(f"[OBWarn] {ticker} unexpected response keys: {list(raw.keys())[:8]}")
-                    return raw.get("orderbook", raw.get("order_book", {"yes": [], "no": []}))
+                    ob = (raw.get("orderbook")
+                          or raw.get("order_book")
+                          or raw.get("orderbook_fp"))
+                    if ob is None:
+                        print(f"[OBWarn] {ticker} unknown keys: {list(raw.keys())[:8]}")
+                        return {"yes": [], "no": []}
+                    # orderbook_fp may nest under a sub-key; log structure once
+                    if not isinstance(ob, dict) or ("yes" not in ob and "no" not in ob):
+                        print(f"[OBWarn] {ticker} ob type={type(ob).__name__} keys={list(ob.keys())[:6] if isinstance(ob, dict) else str(ob)[:80]}")
+                        return {"yes": [], "no": []}
+                    return ob
         except Exception:
             pass
         return {"yes": [], "no": []}

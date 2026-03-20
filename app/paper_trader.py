@@ -611,12 +611,17 @@ class PaperTrader:
 
         is_no = getattr(sig, "side", "yes") == "no"
 
-        # avail_size=0 means depth check was unverifiable (broken OB format); default to
-        # full max size since we can see real liquidity in the market.
-        known_depth = sig.avail_size if sig.avail_size > 0 else self.SINGLE_LEG_MAX_SIZE
-        size = min(known_depth, self.SINGLE_LEG_MAX_SIZE)
-        if size <= 0:
+        # Require at least 10 contracts confirmed at the entry price.
+        # avail_size=0 means the orderbook fetch failed (unknown depth) — skip to avoid
+        # entering with no liquidity confirmation.
+        MIN_DEPTH = 10
+        if sig.avail_size < MIN_DEPTH:
+            if sig.avail_size == 0:
+                print(f"[PaperTrader] SKIP {sig.id}: no depth data at ask")
+            else:
+                print(f"[PaperTrader] SKIP {sig.id}: only {sig.avail_size} cts at ask (min {MIN_DEPTH})")
             return None
+        size = min(sig.avail_size, self.SINGLE_LEG_MAX_SIZE)
 
         pos_id = str(uuid.uuid4())[:8]
         now = datetime.now(timezone.utc)
