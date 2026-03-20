@@ -224,6 +224,14 @@ class StructuralAnomaly:
     detected_at: datetime
 
     def to_dict(self) -> dict:
+        # Live prices (lower/higher objects are updated by ticks)
+        live_gross = round(self.higher.yes_bid - self.lower.yes_ask, 4)
+        fee = round(self.gross_edge - self.net_edge, 4)  # preserve original fee rate
+        live_net = round(live_gross - fee, 4)
+        live_lower_mid = (self.lower.yes_bid + self.lower.yes_ask) / 2
+        live_higher_mid = (self.higher.yes_bid + self.higher.yes_ask) / 2
+        live_middle_prob = round(max(0.0, live_lower_mid - live_higher_mid), 4)
+        live_expected_edge = round(live_net + live_middle_prob * (1.0 - fee), 4)
         return {
             "id": self.id,
             "series": self.series,
@@ -234,9 +242,11 @@ class StructuralAnomaly:
             "higher_threshold": self.higher.threshold,
             "lower_ask": round(self.lower.yes_ask, 4),
             "higher_bid": round(self.higher.yes_bid, 4),
-            "gross_edge": round(self.gross_edge, 4),
-            "net_edge": round(self.net_edge, 4),
-            "entry_cost": round(self.entry_cost, 4),
+            "gross_edge": live_gross,
+            "net_edge": live_net,
+            "middle_prob": live_middle_prob,
+            "expected_edge": live_expected_edge,
+            "entry_cost": round(self.lower.yes_ask + (1.0 - self.higher.yes_bid), 4),
             "avail_size": self.avail_size,
             "detected_at": self.detected_at.isoformat(),
             "gap": len(self.middle_markets) + 1,
