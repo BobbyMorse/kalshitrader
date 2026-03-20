@@ -611,10 +611,9 @@ class PaperTrader:
 
         is_no = getattr(sig, "side", "yes") == "no"
 
-        # In paper trading, avail_size=0 means depth was unverifiable (stale price or
-        # format mismatch), not that the market is empty. Default to a conservative size.
-        DEFAULT_SIZE = 10
-        known_depth = sig.avail_size if sig.avail_size > 0 else DEFAULT_SIZE
+        # avail_size=0 means depth check was unverifiable (broken OB format); default to
+        # full max size since we can see real liquidity in the market.
+        known_depth = sig.avail_size if sig.avail_size > 0 else self.SINGLE_LEG_MAX_SIZE
         size = min(known_depth, self.SINGLE_LEG_MAX_SIZE)
         if size <= 0:
             return None
