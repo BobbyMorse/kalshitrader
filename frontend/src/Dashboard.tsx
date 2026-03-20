@@ -828,17 +828,37 @@ function SingleLegPositionRow({ pos }: { pos: SingleLegPosition }) {
               )}
             </div>
           )}
-          {isOpen && (
-            <div className="mt-1.5">
-              <div className="flex justify-between text-[10px] text-slate-400 mb-0.5">
-                <span>current bid {fmtCents(pos.current_bid)}</span>
-                <span>{progress}% to target</span>
+          {isOpen && (() => {
+            const isNo = pos.side === "no";
+            // For YES: entry_price=ask paid, current_ask=current ask (thesis indicator)
+            // For NO:  entry_price=NO paid (1-bid), current_ask=current yes_bid
+            const entryAsk = pos.entry_price;
+            const curAsk = pos.current_ask ?? entryAsk;
+            const askMoved = curAsk - entryAsk;
+            const askColor = askMoved > 0.001
+              ? "text-green-600"
+              : askMoved < -0.001 ? "text-red-500" : "text-slate-400";
+            const askArrow = askMoved > 0.001 ? "↑" : askMoved < -0.001 ? "↓" : "→";
+            return (
+              <div className="mt-1.5">
+                <div className="flex justify-between text-[10px] mb-0.5">
+                  <span className="text-slate-400 font-mono">
+                    {isNo ? "no" : "ask"} {fmtCents(entryAsk)}
+                    <span className={`ml-1 font-semibold ${askColor}`}>
+                      {askArrow} {fmtCents(curAsk)}
+                    </span>
+                    <span className="text-slate-400 ml-2">
+                      bid {fmtCents(pos.current_bid)}
+                    </span>
+                  </span>
+                  <span className="text-slate-400">{progress}% to target</span>
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-orange-200">
+                  <div className="h-1.5 rounded-full bg-orange-500 transition-all" style={{ width: `${Math.max(0, progress)}%` }} />
+                </div>
               </div>
-              <div className="h-1.5 w-full rounded-full bg-orange-200">
-                <div className="h-1.5 rounded-full bg-orange-500 transition-all" style={{ width: `${Math.max(0, progress)}%` }} />
-              </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
         <div className="flex flex-col items-end gap-2 shrink-0">
           <div className={`font-mono text-lg font-semibold ${pnlColor(pnl)}`}>{fmtPnl(pnl)}</div>

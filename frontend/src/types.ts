@@ -234,7 +234,9 @@ export interface SingleLegPosition {
   status: string;           // "open" | "closed"
   strategy: string;         // "mispriced_leg" | "mean_rev" | "sell_expensive"
   side?: string;            // "yes" | "no"
+  entry_bid?: number;       // YES bid at entry (stop-loss basis)
   current_bid: number;      // YES bid (YES pos) or YES ask (NO pos)
+  current_ask?: number;     // YES ask (YES pos) or YES bid (NO pos) — thesis trend indicator
   unrealized_pnl: number;
   realized_pnl: number;
   exit_price: number;

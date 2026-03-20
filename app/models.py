@@ -348,6 +348,7 @@ class SingleLegPosition:
     strategy: str = "mispriced_leg"
     side: str = "yes"               # "yes" = long YES; "no" = long NO (sell expensive)
     current_bid: float = 0.0       # YES bid (YES pos) or YES ask (NO pos) — see update_single_leg_marks
+    current_ask: float = 0.0       # YES ask (YES pos) or YES bid (NO pos) — opposite of current_bid
     unrealized_pnl: float = 0.0
     realized_pnl: float = 0.0
     exit_price: float = 0.0
@@ -371,8 +372,8 @@ class SingleLegPosition:
             "threshold": self.threshold,
             "adj_ticker": self.adj_ticker,
             "size": self.size,
-            "entry_price": round(self.entry_price, 4),
-            "entry_bid": round(self.entry_bid, 4),
+            "entry_price": round(self.entry_price, 4),   # yes_ask at entry
+            "entry_bid": round(self.entry_bid, 4),         # yes_bid at entry
             "target_bid": round(self.target_bid, 4),
             "entry_time": self.entry_time.isoformat(),
             "entry_avail_size": self.entry_avail_size,
@@ -380,6 +381,7 @@ class SingleLegPosition:
             "strategy": self.strategy,
             "side": self.side,
             "current_bid": round(self.current_bid, 4),
+            "current_ask": round(self.current_ask, 4),
             "unrealized_pnl": round(self.unrealized_pnl, 4),
             "realized_pnl": round(self.realized_pnl, 4),
             "exit_price": round(self.exit_price, 4),

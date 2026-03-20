@@ -105,6 +105,7 @@ def _load_single_leg_position(d: dict) -> SingleLegPosition:
         status=d.get("status", "open"), strategy=d.get("strategy", "mispriced_leg"),
         side=d.get("side", "yes"),
         current_bid=d.get("current_bid", 0.0),
+        current_ask=d.get("current_ask", 0.0),
         unrealized_pnl=d.get("unrealized_pnl", 0.0),
         realized_pnl=d.get("realized_pnl", 0.0),
         exit_price=d.get("exit_price", 0.0),
@@ -631,11 +632,13 @@ class PaperTrader:
             entry_price = 1.0 - sig.market.yes_bid   # NO ask = 1 - yes_bid
             entry_bid_ref = sig.market.yes_bid        # YES bid at entry (stop-loss reference)
             current_bid_init = sig.market.yes_ask     # track YES ask for NO positions
+            current_ask_init = sig.market.yes_bid     # opposite side
         else:
             strategy = "mean_rev"
             entry_price = sig.market.yes_ask
             entry_bid_ref = sig.market.yes_bid
             current_bid_init = sig.market.yes_bid
+            current_ask_init = sig.market.yes_ask     # opposite side (= entry_price initially)
 
         pos = SingleLegPosition(
             id=pos_id,
@@ -654,6 +657,7 @@ class PaperTrader:
             strategy=strategy,
             side="no" if is_no else "yes",
             current_bid=current_bid_init,
+            current_ask=current_ask_init,
             entry_inversion=sig.inversion,
             entry_interp_mid=sig.target_bid,
             entry_adj_lower_bid=sig.adj_lower.yes_bid if sig.adj_lower else 0.0,
@@ -700,6 +704,8 @@ class PaperTrader:
                 # NO positions: track YES ask (current value = 1 - yes_ask)
                 # YES positions: track YES bid (current value)
                 pos.current_bid = tm.yes_ask if is_no else tm.yes_bid
+                # current_ask = opposite side — thesis trend indicator
+                pos.current_ask = tm.yes_bid if is_no else tm.yes_ask
 
             if is_no:
                 # P&L = yes_bid_entry - yes_ask_now  (current_bid holds yes_ask for NO pos)
