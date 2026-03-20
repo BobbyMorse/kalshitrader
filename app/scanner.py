@@ -559,8 +559,9 @@ def find_ladder_mean_reversion(
             # Target: exit when market.yes_bid closes within 2¢ of interpolated fair value
             target_bid = round(interp_mid - 0.02, 4)
 
-            # Require at least 2¢ profit if target is hit (basic sanity check).
-            if target_bid - market.yes_ask < 0.02:
+            # Require at least 12¢ gross gain at target: 7¢ flat fee + 5¢ minimum net profit.
+            # fee_rate=7¢ is charged per contract (same flat model as threshold arb).
+            if target_bid - market.yes_ask < 0.12:
                 _dbg_inc(series, "rr_gate")
                 continue
 
@@ -698,9 +699,9 @@ def find_ladder_sell_expensive(
             # (stored in target_bid field; used as YES ask target for NO positions)
             target_ask = round(interp_mid + 0.02, 4)
 
-            # Require at least 2¢ profit if target is hit (basic sanity check).
+            # Require at least 12¢ gross gain at target: 7¢ flat fee + 5¢ minimum net profit.
             profit_if_target = market.yes_bid - target_ask
-            if profit_if_target < 0.02:
+            if profit_if_target < 0.12:
                 _dbg_inc(series, "rr_gate")
                 continue
 
