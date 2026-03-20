@@ -532,6 +532,12 @@ def find_ladder_mean_reversion(
                 _dbg_inc(series, "no_price")
                 continue
 
+            # Near-the-money filter: tail markets (ask < 20¢ or > 80¢) are illiquid
+            # and anomalies there are noise, not genuine mispricings.
+            if market.yes_ask < 0.20 or market.yes_ask > 0.80:
+                _dbg_inc(series, "tail_market")
+                continue
+
             # Liquidity: middle rung must have active bid and tight spread.
             # Wide spreads create false anomalies (mid is far from ask) and make
             # the target land below entry, guaranteeing a loss on exit.
@@ -677,6 +683,12 @@ def find_ladder_sell_expensive(
                 market.yes_bid   <= 0 or market.yes_ask   <= 0 or
                 upper_nb.yes_bid <= 0 or upper_nb.yes_ask <= 0):
                 _dbg_inc(series, "no_price")
+                continue
+
+            # Near-the-money filter: only trade expensive rungs with yes_bid 20-80¢.
+            # Deep ITM (bid > 80¢) or deep OTM (bid < 20¢) anomalies are noise.
+            if market.yes_bid < 0.20 or market.yes_bid > 0.80:
+                _dbg_inc(series, "tail_market")
                 continue
 
             spread = market.yes_ask - market.yes_bid
