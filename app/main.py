@@ -1210,7 +1210,7 @@ async def trade_inverted(ticker: str) -> dict:
         raise HTTPException(status_code=404, detail=f"Inverted signal not found: {ticker!r}")
     if _trader.is_positioned(ticker):
         raise HTTPException(status_code=409, detail="Already positioned")
-    # Refresh depth at time of manual trade click
+    # Re-check depth at current price before executing
     await _enrich_single_leg_depths([sig], _config["max_size"])
     if sig.avail_size == 0:
         raise HTTPException(status_code=409, detail="No depth at quoted ask price — market may have moved")

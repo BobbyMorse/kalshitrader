@@ -177,6 +177,8 @@ export interface StructuralAnomaly {
   higher_bid: number;
   gross_edge: number;
   net_edge: number;
+  middle_prob?: number;
+  expected_edge?: number;
   entry_cost: number;
   avail_size: number;
   detected_at: string;
