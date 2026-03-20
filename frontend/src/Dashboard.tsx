@@ -780,8 +780,13 @@ function SingleLegPositionRow({ pos }: { pos: SingleLegPosition }) {
   const [flattening, setFlattening] = useState(false);
   const isOpen = pos.status !== "closed";
   const pnl = isOpen ? pos.unrealized_pnl : pos.realized_pnl;
+  const isNoPos = pos.side === "no";
+  // YES: progress = how far bid has risen toward target (entry_price → target_bid)
+  // NO:  progress = how far YES ask (current_bid) has fallen toward target (entry_bid → target_bid)
   const progress = pos.current_bid > 0
-    ? Math.min(100, Math.round(((pos.current_bid - pos.entry_price) / (pos.target_bid - pos.entry_price)) * 100))
+    ? isNoPos
+      ? Math.min(100, Math.max(0, Math.round(((pos.entry_bid ?? 0) - pos.current_bid) / ((pos.entry_bid ?? 0) - pos.target_bid) * 100)))
+      : Math.min(100, Math.max(0, Math.round((pos.current_bid - pos.entry_price) / (pos.target_bid - pos.entry_price) * 100)))
     : 0;
 
   async function handleFlatten() {
@@ -810,7 +815,7 @@ function SingleLegPositionRow({ pos }: { pos: SingleLegPosition }) {
             </a>
           </div>
           <div className="mt-1 text-xs font-mono text-slate-600">
-            Long YES {pos.threshold} · {pos.size} cts
+            Long {pos.side === "no" ? "NO" : "YES"} {pos.threshold} · {pos.size} cts
             {pos.entry_avail_size !== undefined && pos.entry_avail_size > 0 && (
               <span className="text-slate-400"> ({pos.entry_avail_size} avail)</span>
             )}
@@ -830,26 +835,37 @@ function SingleLegPositionRow({ pos }: { pos: SingleLegPosition }) {
           )}
           {isOpen && (() => {
             const isNo = pos.side === "no";
-            const entryAsk = pos.entry_price;
-            const curAsk = pos.current_ask ?? entryAsk;
-            const entryBid = pos.entry_bid ?? 0;
-            const curBid = pos.current_bid;
-            const askMoved = curAsk - entryAsk;
-            const bidMoved = curBid - entryBid;
             const trendColor = (d: number) => d > 0.001 ? "text-green-600" : d < -0.001 ? "text-red-500" : "text-slate-400";
             const arrow = (d: number) => d > 0.001 ? "↑" : d < -0.001 ? "↓" : "→";
+            // YES pos: track yes_ask (entry_price→current_ask) and yes_bid (entry_bid→current_bid)
+            // NO pos:  track yes_ask falling (entry_bid→current_bid) and NO cost rising (entry_price→1-current_bid)
+            const col1Label = isNo ? "yes ask" : "ask";
+            const col1Entry = isNo ? (pos.entry_bid ?? 0) : pos.entry_price;
+            const col1Cur   = isNo ? pos.current_bid : (pos.current_ask ?? pos.entry_price);
+            const col1Delta = isNo ? col1Cur - col1Entry : col1Cur - col1Entry; // falling=bad for NO YES ask
+            const col1Good  = isNo ? col1Delta < -0.001 : col1Delta > 0.001;   // NO: falling YES ask is good
+            const col1Color = isNo
+              ? (col1Delta < -0.001 ? "text-green-600" : col1Delta > 0.001 ? "text-red-500" : "text-slate-400")
+              : trendColor(col1Delta);
+            const col2Label = isNo ? "no cost" : "bid";
+            const col2Entry = isNo ? pos.entry_price : (pos.entry_bid ?? 0);
+            const col2Cur   = isNo ? (1 - pos.current_bid) : pos.current_bid;
+            const col2Delta = col2Cur - col2Entry;
+            const col2Color = isNo
+              ? (col2Delta > 0.001 ? "text-green-600" : col2Delta < -0.001 ? "text-red-500" : "text-slate-400")
+              : trendColor(col2Delta);
             return (
               <div className="mt-1.5">
                 <div className="flex justify-between text-[10px] mb-0.5">
                   <span className="text-slate-400 font-mono">
-                    {isNo ? "no" : "ask"} {fmtCents(entryAsk)}
-                    <span className={`ml-1 font-semibold ${trendColor(askMoved)}`}>
-                      {arrow(askMoved)} {fmtCents(curAsk)}
+                    {col1Label} {fmtCents(col1Entry)}
+                    <span className={`ml-1 font-semibold ${col1Color}`}>
+                      {arrow(col1Delta)} {fmtCents(col1Cur)}
                     </span>
                     <span className="ml-3">
-                      bid {fmtCents(entryBid)}
-                      <span className={`ml-1 font-semibold ${trendColor(bidMoved)}`}>
-                        {arrow(bidMoved)} {fmtCents(curBid)}
+                      {col2Label} {fmtCents(col2Entry)}
+                      <span className={`ml-1 font-semibold ${col2Color}`}>
+                        {arrow(col2Delta)} {fmtCents(col2Cur)}
                       </span>
                     </span>
                   </span>
