@@ -513,18 +513,14 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                     tick_times=_tick_times,
                 )
                 if inverted:
+                    # Tick handler only UPDATES existing signals (prices refresh in real-time).
+                    # Never adds new signals — those must go through the refresh loop which
+                    # validates depth before display.
                     inv_index = {s.id: i for i, s in enumerate(_inverted_leg_signals)}
                     for sig in inverted:
                         if sig.id in inv_index:
                             _inverted_leg_signals[inv_index[sig.id]] = sig
-                        else:
-                            _inverted_leg_signals.append(sig)
-                            print(
-                                f"[Feed] MEAN-REV {sig.id}: "
-                                f"mid={sig.market.mid():.2f} interp={((sig.adj_lower.mid() + sig.adj_higher.mid()) / 2 if sig.adj_lower else sig.adj_higher.mid()):.2f} "
-                                f"anomaly={sig.inversion:.2f}"
-                            )
-                    broadcast_needed = True
+                            broadcast_needed = True
 
     # ── Bucket sum arb check ──────────────────────────────────────────────────
     bm = _bucket_map.get(ticker)
