@@ -506,6 +506,10 @@ def find_ladder_mean_reversion(
         if sorted_markets[0].expiry_dt - now < min_ttl:
             _dbg_inc(series, "expiring_soon")
             continue
+        # Max TTL: long-dated markets can trend for months — mean-rev is unreliable
+        if sorted_markets[0].expiry_dt - now > timedelta(days=45):
+            _dbg_inc(series, "too_far_out")
+            continue
 
         # Categorical market check: skip bell-curve/bucket markets masquerading as
         # threshold ladders (prices INCREASE with threshold = mutually exclusive buckets)
@@ -559,9 +563,9 @@ def find_ladder_mean_reversion(
             # Target: exit when market.yes_bid closes within 2¢ of interpolated fair value
             target_bid = round(interp_mid - 0.02, 4)
 
-            # Require at least 12¢ gross gain at target: 7¢ flat fee + 5¢ minimum net profit.
-            # fee_rate=7¢ is charged per contract (same flat model as threshold arb).
-            if target_bid - market.yes_ask < 0.12:
+            # Require at least 5¢ gross gain at target after estimated round-trip fee.
+            # Secondary market fee ≈ fee_rate × (entry + exit) ≈ 1-2¢; require 3¢ net min.
+            if target_bid - market.yes_ask < 0.05:
                 _dbg_inc(series, "rr_gate")
                 continue
 
@@ -656,6 +660,9 @@ def find_ladder_sell_expensive(
         if sorted_markets[0].expiry_dt - now < min_ttl:
             _dbg_inc(series, "expiring_soon")
             continue
+        if sorted_markets[0].expiry_dt - now > timedelta(days=45):
+            _dbg_inc(series, "too_far_out")
+            continue
 
         priced = [m for m in sorted_markets if m.yes_ask > 0 and m.yes_bid > 0]
         if len(priced) >= 3:
@@ -699,9 +706,9 @@ def find_ladder_sell_expensive(
             # (stored in target_bid field; used as YES ask target for NO positions)
             target_ask = round(interp_mid + 0.02, 4)
 
-            # Require at least 12¢ gross gain at target: 7¢ flat fee + 5¢ minimum net profit.
+            # Require at least 5¢ gross gain at target.
             profit_if_target = market.yes_bid - target_ask
-            if profit_if_target < 0.12:
+            if profit_if_target < 0.05:
                 _dbg_inc(series, "rr_gate")
                 continue
 

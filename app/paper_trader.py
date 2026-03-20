@@ -706,8 +706,9 @@ class PaperTrader:
                 gain = pos.entry_bid - pos.current_bid
             else:
                 gain = pos.current_bid - pos.entry_price
-            fee = self.fee_rate  # flat 7¢/contract per trade, same as threshold arb settlement fee
-            pos.unrealized_pnl = round((gain - fee) * pos.size, 4)  # always show fee drag in MTM
+            exit_val = (1.0 - pos.current_bid) if is_no else pos.current_bid
+            fee = self.fee_rate * (pos.entry_price + exit_val)  # 7% of round-trip transaction value
+            pos.unrealized_pnl = round((gain - fee) * pos.size, 4)
 
             # Auto-exit: price normalized to near fair value
             if is_no:
@@ -719,7 +720,8 @@ class PaperTrader:
                     gain = pos.entry_bid - pos.current_bid
                 else:
                     gain = pos.current_bid - pos.entry_price
-                fee = self.fee_rate  # flat 7¢/contract per trade, same as threshold arb settlement fee
+                exit_val = (1.0 - pos.current_bid) if is_no else pos.current_bid
+                fee = self.fee_rate * (pos.entry_price + exit_val)
                 pos.realized_pnl = round((gain - fee) * pos.size, 4)
                 pos.exit_price = pos.current_bid
                 pos.exit_time = now
@@ -769,7 +771,8 @@ class PaperTrader:
                     gain = pos.entry_bid - pos.current_bid
                 else:
                     gain = pos.current_bid - pos.entry_price
-                fee = self.fee_rate  # flat 7¢/contract per trade, same as threshold arb settlement fee
+                exit_val = (1.0 - pos.current_bid) if is_no else pos.current_bid
+                fee = self.fee_rate * (pos.entry_price + exit_val)
                 pos.realized_pnl = round((gain - fee) * pos.size, 4)
                 pos.exit_price = pos.current_bid
                 pos.exit_time = now
@@ -796,7 +799,8 @@ class PaperTrader:
             gain = pos.entry_bid - pos.current_bid  # yes_bid_entry - yes_ask_now
         else:
             gain = pos.current_bid - pos.entry_price
-        fee = self.fee_rate * gain if gain > 0 else 0.0
+        exit_val = (1.0 - pos.current_bid) if is_no else pos.current_bid
+        fee = self.fee_rate * (pos.entry_price + exit_val)
         pos.realized_pnl = round((gain - fee) * pos.size, 4)
         pos.exit_price = pos.current_bid
         pos.exit_time = datetime.now(timezone.utc)
