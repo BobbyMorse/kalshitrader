@@ -21,8 +21,67 @@ from typing import Dict, List, Optional
 
 import uuid
 
+import numpy as np
+
 from models import (BucketMarket, BucketSumSignal, SingleLegSignal,
                     StructuralAnomaly, ThresholdMarket, ViolationSignal)
+
+
+# ── Distribution model for non-linear fair value estimation ──────────────────
+
+def _fit_lognormal(sorted_markets: List[ThresholdMarket]):
+    """
+    Fit P(S > T) = Φ((μ - log(T)) / σ) to a full rung ladder.
+
+    Linearises by applying Φ⁻¹ to each mid-price, then OLS on log(threshold).
+    Returns (mu, sigma, r_squared) if fit quality >= threshold, else None.
+
+    Works naturally for any price-based asset (BTC, ETH, oil, natgas, FX).
+    Returns None (falls back to linear interpolation) when:
+      - fewer than 4 priced rungs with interior probabilities
+      - slope has wrong sign (prices increase with threshold — categorical)
+      - scipy not installed
+    """
+    try:
+        from scipy.stats import norm
+    except ImportError:
+        return None
+
+    pts = [
+        (m.threshold, m.mid())
+        for m in sorted_markets
+        if m.threshold > 0 and m.yes_bid > 0 and m.yes_ask > 0
+        and 0.03 < m.mid() < 0.97
+    ]
+    if len(pts) < 4:
+        return None
+
+    log_t = np.array([np.log(t) for t, _ in pts])
+    probs  = np.array([p          for _, p in pts])
+    z      = norm.ppf(probs)   # Φ⁻¹(p) = (μ - log T) / σ  →  linear in log T
+
+    A = np.column_stack([np.ones(len(log_t)), log_t])
+    coeffs, _, _, _ = np.linalg.lstsq(A, z, rcond=None)
+    a, b = coeffs            # z = a + b·log(T);  b = -1/σ  (must be negative)
+
+    if b >= 0:               # prices increase with threshold → not a P(S>T) ladder
+        return None
+
+    sigma = -1.0 / b
+    mu    = a * sigma
+
+    z_pred = a + b * log_t
+    ss_res = np.sum((z - z_pred) ** 2)
+    ss_tot = np.sum((z - np.mean(z)) ** 2)
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 1e-10 else 0.0
+
+    return mu, sigma, float(r2)
+
+
+def _lognormal_fair(threshold: float, mu: float, sigma: float) -> float:
+    """P(S > threshold) under log-normal with parameters (mu, sigma)."""
+    from scipy.stats import norm
+    return float(norm.cdf((mu - np.log(threshold)) / sigma))
 
 _T_RE = re.compile(r"-T([\d.]+)$", re.IGNORECASE)
 _BARE_FLOAT_RE = re.compile(r"-(\d+\.\d+)$")    # bare decimal: KXAAAGASM-26MAR31-4.50
@@ -520,6 +579,18 @@ def find_ladder_mean_reversion(
                 _dbg_inc(series, "categorical_shape")
                 continue
 
+        # Fit log-normal distribution to the full rung ladder.
+        # When R² >= 0.85 the model replaces 2-neighbor linear interpolation,
+        # giving accurate fair values for non-linear distributions (crypto, oil, FX).
+        # KXFED / step-function markets fit poorly (R² ≈ 0) and fall back to linear.
+        dist = _fit_lognormal(sorted_markets)
+        use_model = dist is not None and dist[2] >= 0.85
+        if debug and dist is not None:
+            r2_tag = f"R²={dist[2]:.3f}"
+            spot   = np.exp(dist[0])
+            print(f"  [{series}] lognormal fit {r2_tag} implied_spot={spot:.4g} "
+                  f"({'MODEL' if use_model else 'fallback→linear'})")
+
         for k in range(1, len(sorted_markets) - 1):
             lower_nb = sorted_markets[k - 1]   # lower threshold (higher price)
             market   = sorted_markets[k]        # candidate cheap middle rung
@@ -557,17 +628,20 @@ def find_ladder_mean_reversion(
                 _dbg_inc(series, "neighbor_wide_spread")
                 continue
 
-            # Interpolated fair value from both neighbors
-            interp_mid = (lower_nb.mid() + upper_nb.mid()) / 2
-            anomaly = interp_mid - market.mid()  # positive = market is cheap
+            # Fair value: log-normal model when R²≥0.85, else 2-neighbor linear interpolation
+            if use_model:
+                fair_mid = _lognormal_fair(market.threshold, dist[0], dist[1])
+            else:
+                fair_mid = (lower_nb.mid() + upper_nb.mid()) / 2
+            anomaly = fair_mid - market.mid()  # positive = market is cheap
 
             # Anomaly threshold: flat minimum, no spread multiplier.
             if anomaly < min_anomaly:
                 _dbg_inc(series, f"anomaly_too_small(need={min_anomaly:.2f},got={anomaly:.2f})")
                 continue
 
-            # Target: exit when market.yes_bid closes within 2¢ of interpolated fair value
-            target_bid = round(interp_mid - 0.02, 4)
+            # Target: exit when market.yes_bid closes within 2¢ of model fair value
+            target_bid = round(fair_mid - 0.02, 4)
 
             # Require at least 5¢ gross gain at target after estimated round-trip fee.
             # Secondary market fee ≈ fee_rate × (entry + exit) ≈ 1-2¢; require 3¢ net min.
@@ -674,6 +748,14 @@ def find_ladder_sell_expensive(
                 _dbg_inc(series, "categorical_shape")
                 continue
 
+        dist = _fit_lognormal(sorted_markets)
+        use_model = dist is not None and dist[2] >= 0.85
+        if debug and dist is not None:
+            r2_tag = f"R²={dist[2]:.3f}"
+            spot   = np.exp(dist[0])
+            print(f"  [SellExp/{series}] lognormal fit {r2_tag} implied_spot={spot:.4g} "
+                  f"({'MODEL' if use_model else 'fallback→linear'})")
+
         for k in range(1, len(sorted_markets) - 1):
             lower_nb = sorted_markets[k - 1]
             market   = sorted_markets[k]
@@ -704,16 +786,20 @@ def find_ladder_sell_expensive(
                 _dbg_inc(series, "neighbor_wide_spread")
                 continue
 
-            interp_mid = (lower_nb.mid() + upper_nb.mid()) / 2
-            anomaly = market.mid() - interp_mid  # positive = expensive
+            # Fair value: log-normal model when R²≥0.85, else 2-neighbor linear interpolation
+            if use_model:
+                fair_mid = _lognormal_fair(market.threshold, dist[0], dist[1])
+            else:
+                fair_mid = (lower_nb.mid() + upper_nb.mid()) / 2
+            anomaly = market.mid() - fair_mid  # positive = expensive
 
             if anomaly < min_anomaly:
                 _dbg_inc(series, f"anomaly_too_small(need={min_anomaly:.2f},got={anomaly:.2f})")
                 continue
 
-            # Target: YES ask falls to interp_mid + 2¢
+            # Target: YES ask falls to model fair + 2¢
             # (stored in target_bid field; used as YES ask target for NO positions)
-            target_ask = round(interp_mid + 0.02, 4)
+            target_ask = round(fair_mid + 0.02, 4)
 
             # Require at least 5¢ gross gain at target.
             profit_if_target = market.yes_bid - target_ask
