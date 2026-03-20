@@ -887,6 +887,16 @@ async def _refresh_markets() -> None:
                       f"interp={interp:.2f} anomaly={sig.inversion:.2f} "
                       f"depth={sig.avail_size}")
 
+        if _config["auto_trade_inverted"] and _config["auto_trade"] and _config["paper_trading"]:
+            sell_new = 0
+            for sig in sell_exp:
+                if not _trader.is_positioned(sig.id):
+                    if _trader.execute_single_leg(sig):
+                        sell_new += 1
+            if sell_new:
+                print(f"[Refresh] Opened {sell_new} sell-expensive (NO) positions")
+            _sell_expensive_signals[:] = [s for s in _sell_expensive_signals if not _trader.is_positioned(s.id)]
+
         best_near = f" best={near_misses[0].gross_edge:.3f}" if near_misses else ""
         print(
             f"[Refresh] {_state['markets_fetched']} markets | "
