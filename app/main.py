@@ -379,15 +379,16 @@ async def _enrich_single_leg_depths(signals: list, max_size: int) -> None:
         is_no = getattr(sig, "side", "yes") == "no"
         if is_no:
             bid_c = round(sig.market.yes_bid * 100)
-            depth = sum(_qty(qty) for price, qty in ob.get("yes", []) if _pc(price) == bid_c)
+            # ±1 tick tolerance: price may have moved 1¢ since REST snapshot
+            depth = sum(_qty(qty) for price, qty in ob.get("yes", []) if abs(_pc(price) - bid_c) <= 1)
         else:
             ask_c = round(sig.market.yes_ask * 100)
             no_target = 100 - ask_c
-            # Primary: NO bids at complementary price (standard Kalshi format)
-            depth = sum(_qty(qty) for price, qty in ob.get("no", []) if _pc(price) == no_target)
+            # Primary: NO bids at complementary price (±1 tick tolerance)
+            depth = sum(_qty(qty) for price, qty in ob.get("no", []) if abs(_pc(price) - no_target) <= 1)
             if depth == 0:
-                # Fallback: YES asks stored directly in yes key (some API versions)
-                depth = sum(_qty(qty) for price, qty in ob.get("yes", []) if _pc(price) == ask_c)
+                # Fallback: YES asks at ask price (±1 tick)
+                depth = sum(_qty(qty) for price, qty in ob.get("yes", []) if abs(_pc(price) - ask_c) <= 1)
         sig.avail_size = min(depth, max_size)
 
     await _asyncio.gather(*[_fetch_one(s) for s in signals])

@@ -584,10 +584,7 @@ def find_ladder_mean_reversion(
                     if now_mono - freshest_nb > max_stale_s:
                         _dbg_inc(series, "neighbors_stale")
                         continue
-                    # Middle updated after freshest neighbor? It already repriced — skip.
-                    if middle_last >= freshest_nb:
-                        _dbg_inc(series, "middle_not_stale")
-                        continue
+                    # (middle_not_stale check removed: anomaly + R:R gate are sufficient guards)
 
             _dbg_inc(series, "SIGNAL")
             signals.append(SingleLegSignal(
@@ -722,9 +719,7 @@ def find_ladder_sell_expensive(
                     if now_mono - freshest_nb > max_stale_s:
                         _dbg_inc(series, "neighbors_stale")
                         continue
-                    if middle_last >= freshest_nb:
-                        _dbg_inc(series, "middle_not_stale")
-                        continue
+                    # (middle_not_stale check removed: anomaly + R:R gate are sufficient guards)
 
             _dbg_inc(series, "SIGNAL")
             signals.append(SingleLegSignal(
