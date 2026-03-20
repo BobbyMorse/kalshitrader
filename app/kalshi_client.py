@@ -558,7 +558,10 @@ class KalshiClient:
             async with httpx.AsyncClient(timeout=8) as client:
                 resp = await client.get(self._url(endpoint), headers=headers)
                 if resp.status_code == 200:
-                    return resp.json().get("orderbook", {"yes": [], "no": []})
+                    raw = resp.json()
+                    if "orderbook" not in raw:
+                        print(f"[OBWarn] {ticker} unexpected response keys: {list(raw.keys())[:8]}")
+                    return raw.get("orderbook", raw.get("order_book", {"yes": [], "no": []}))
         except Exception:
             pass
         return {"yes": [], "no": []}

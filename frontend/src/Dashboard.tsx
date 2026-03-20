@@ -1083,9 +1083,10 @@ export default function Dashboard() {
   }, [activeTab]);
 
   // Separate threshold vs bucket vs single-leg positions
-  const thresholdPositions = positions.filter((p) => (p as any).type !== "bucket_sum" && (p as any).strategy !== "mispriced_leg") as Position[];
+  const SINGLE_LEG_STRATEGIES = new Set(["mispriced_leg", "mean_rev", "sell_expensive", "limit_ladder"]);
+  const thresholdPositions = positions.filter((p) => (p as any).type !== "bucket_sum" && !SINGLE_LEG_STRATEGIES.has((p as any).strategy)) as Position[];
   const bucketPositions = positions.filter((p) => (p as any).type === "bucket_sum") as BucketPosition[];
-  const singleLegPositions = positions.filter((p) => (p as any).strategy === "mispriced_leg") as SingleLegPosition[];
+  const singleLegPositions = positions.filter((p) => SINGLE_LEG_STRATEGIES.has((p as any).strategy)) as SingleLegPosition[];
 
   const openPos = thresholdPositions.filter((p) => p.status !== "closed");
   const closedPos = thresholdPositions.filter((p) => p.status === "closed");
