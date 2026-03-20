@@ -736,19 +736,25 @@ class PaperTrader:
                       f"{'yes_ask' if is_no else 'bid'}={pos.current_bid:.2f} PnL=${pos.realized_pnl:.2f}")
                 continue
 
-            # Tight stop-loss:
-            #   YES pos: exit if yes_bid drops 5¢ below entry_bid
-            #   NO  pos: exit if yes_ask rises 5¢ above entry_bid (entry YES bid)
+            # Stop-loss:
+            #   YES pos: exit if yes_ASK drops 5¢ below entry_price (ask we paid)
+            #            → thesis failed; market priced even cheaper and not reverting
+            #            Tracking ask (not bid) prevents triggering on transient bid noise
+            #            in wide-spread markets where bid can dip without ask moving.
+            #   NO  pos: exit if yes_ask rises 5¢ above entry YES bid
             if is_no:
                 stop_hit = pos.current_bid >= pos.entry_bid + 0.05
             else:
-                stop_hit = pos.current_bid <= pos.entry_bid - 0.05
+                # tm.yes_ask is the live ask; fall back to no stop if tm unavailable
+                stop_hit = (tm is not None and tm.yes_ask <= pos.entry_price - 0.05)
             if stop_hit:
                 if is_no:
                     loss = pos.entry_bid - pos.current_bid  # negative = loss
                 else:
                     loss = pos.current_bid - pos.entry_price
-                pos.realized_pnl = round(loss * pos.size, 4)
+                exit_val = (1.0 - pos.current_bid) if is_no else pos.current_bid
+                fee = self.fee_rate * (pos.entry_price + exit_val)
+                pos.realized_pnl = round((loss - fee) * pos.size, 4)
                 pos.exit_price = pos.current_bid
                 pos.exit_time = now
                 pos.exit_reason = "stop_loss"
@@ -760,9 +766,9 @@ class PaperTrader:
                 # Cooldown: block re-entry for 2 hours to prevent feedback loop
                 self._single_cooldown[pos.signal_id] = now + timedelta(hours=2)
                 auto_closed.append(pos.id)
+                stop_ref = f"yes_ask={tm.yes_ask:.2f}" if (not is_no and tm) else f"yes_ask={pos.current_bid:.2f}"
                 print(f"[PaperTrader] STOP-LOSS SINGLE-LEG {pos.id} [{pos.strategy}]: "
-                      f"{'yes_ask' if is_no else 'bid'}={pos.current_bid:.2f} "
-                      f"entry_ref={pos.entry_bid:.2f} PnL=${pos.realized_pnl:.2f} (cooldown 2h)")
+                      f"{stop_ref} entry_ask={pos.entry_price:.2f} PnL=${pos.realized_pnl:.2f} (cooldown 2h)")
                 continue
 
             # Expire
