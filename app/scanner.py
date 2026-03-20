@@ -542,7 +542,7 @@ def find_ladder_mean_reversion(
             # Wide spreads create false anomalies (mid is far from ask) and make
             # the target land below entry, guaranteeing a loss on exit.
             spread = market.yes_ask - market.yes_bid
-            if market.yes_bid < 0.05 or spread > 0.15:
+            if market.yes_bid < 0.05 or spread > 0.25:
                 _dbg_inc(series, "middle_illiquid")
                 continue
             # Neighbors must also be liquid enough to be reliable references.
@@ -692,7 +692,7 @@ def find_ladder_sell_expensive(
                 continue
 
             spread = market.yes_ask - market.yes_bid
-            if market.yes_bid < 0.05 or spread > 0.15:
+            if market.yes_bid < 0.05 or spread > 0.25:
                 _dbg_inc(series, "middle_illiquid")
                 continue
             nb_spread_lower = lower_nb.yes_ask - lower_nb.yes_bid
