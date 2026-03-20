@@ -482,11 +482,9 @@ function InvertedLegRow({ sig }: { sig: InvertedLegSignal }) {
             <span className="text-slate-400">
               Buy {sig.ticker} YES @ {fmtCents(sig.ask)}, exit ≥ {fmtCents(sig.target_bid)}
             </span>
-            {sig.avail_size > 0 ? (
-              <span className="text-emerald-600 font-semibold">{sig.avail_size} cts available</span>
-            ) : (
-              <span className="text-red-500 font-semibold">no depth at price</span>
-            )}
+            <span className={sig.avail_size >= 10 ? "text-emerald-600 font-semibold" : "text-orange-500 font-semibold"}>
+              {sig.avail_size} cts at price{sig.avail_size < 10 ? " (min 10 to trade)" : ""}
+            </span>
           </div>
         </div>
         <button
