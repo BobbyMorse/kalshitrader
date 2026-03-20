@@ -844,6 +844,8 @@ async def _refresh_markets() -> None:
         # Enrich with real ask-side depth before display or trading
         if inverted:
             await _enrich_single_leg_depths(inverted, _config["max_size"])
+        # Drop signals with no liquidity — no resting orders at quoted ask = not actionable
+        inverted = [s for s in inverted if s.avail_size > 0]
         _inverted_leg_signals.clear()
         _inverted_leg_signals.extend(inverted)
 
@@ -872,6 +874,7 @@ async def _refresh_markets() -> None:
                                               tick_times=_tick_times, debug=True)
         if sell_exp:
             await _enrich_single_leg_depths(sell_exp, _config["max_size"])
+        sell_exp = [s for s in sell_exp if s.avail_size > 0]
         _sell_expensive_signals.clear()
         _sell_expensive_signals.extend(sell_exp)
 
