@@ -596,7 +596,7 @@ class PaperTrader:
 
     # Max size for directional single-leg bets — much smaller than arb size
     # because there is no guaranteed payout; position is a directional bet.
-    SINGLE_LEG_MAX_SIZE = 50
+    SINGLE_LEG_MAX_SIZE = 100
 
     def execute_single_leg(self, sig: SingleLegSignal) -> Optional[SingleLegPosition]:
         """Paper-fill a single-leg mispriced market position.
