@@ -565,9 +565,11 @@ class KalshiClient:
                     if ob is None:
                         print(f"[OBWarn] {ticker} unknown keys: {list(raw.keys())[:8]}")
                         return {"yes": [], "no": []}
-                    # orderbook_fp may nest under a sub-key; log structure once
+                    # orderbook_fp uses yes_dollars/no_dollars — normalize to yes/no
+                    if isinstance(ob, dict) and ("yes_dollars" in ob or "no_dollars" in ob):
+                        ob = {"yes": ob.get("yes_dollars", []), "no": ob.get("no_dollars", [])}
                     if not isinstance(ob, dict) or ("yes" not in ob and "no" not in ob):
-                        print(f"[OBWarn] {ticker} ob type={type(ob).__name__} keys={list(ob.keys())[:6] if isinstance(ob, dict) else str(ob)[:80]}")
+                        print(f"[OBWarn] {ticker} unexpected ob keys: {list(ob.keys())[:6] if isinstance(ob, dict) else str(ob)[:80]}")
                         return {"yes": [], "no": []}
                     return ob
         except Exception:
