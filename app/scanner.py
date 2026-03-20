@@ -643,9 +643,11 @@ def find_ladder_mean_reversion(
             # Target: exit when market.yes_bid closes within 2¢ of model fair value
             target_bid = round(fair_mid - 0.02, 4)
 
-            # Require at least 5¢ gross gain at target after estimated round-trip fee.
-            # Secondary market fee ≈ fee_rate × (entry + exit) ≈ 1-2¢; require 3¢ net min.
-            if target_bid - market.yes_ask < 0.05:
+            # Fee-aware R:R gate: net gain after 7% round-trip fee must be >= 2¢.
+            # Fee = 0.07 × (entry_ask + exit_bid). For a 70¢ entry → ~10¢ fee round-trip.
+            # Old gross-only gate (5¢) let through trades where fees > gain.
+            _fee = 0.07 * (market.yes_ask + target_bid)
+            if target_bid - market.yes_ask - _fee < 0.02:
                 _dbg_inc(series, "rr_gate")
                 continue
 
@@ -801,9 +803,14 @@ def find_ladder_sell_expensive(
             # (stored in target_bid field; used as YES ask target for NO positions)
             target_ask = round(fair_mid + 0.02, 4)
 
-            # Require at least 5¢ gross gain at target.
-            profit_if_target = market.yes_bid - target_ask
-            if profit_if_target < 0.05:
+            # Fee-aware R:R gate for NO positions: net gain after 7% round-trip fee >= 2¢.
+            # Entry: buy NO at (1 - yes_bid). Exit: sell NO at (1 - target_ask).
+            # Fee = 0.07 × ((1-yes_bid) + (1-target_ask))
+            _entry_no = 1.0 - market.yes_bid
+            _exit_no  = 1.0 - target_ask
+            _fee = 0.07 * (_entry_no + _exit_no)
+            _gross = market.yes_bid - target_ask   # = exit_no - entry_no
+            if _gross - _fee < 0.02:
                 _dbg_inc(series, "rr_gate")
                 continue
 
