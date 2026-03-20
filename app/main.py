@@ -323,7 +323,7 @@ async def _enrich_depths(violations: list, max_size: int) -> None:
         lower_ask_c = round(v.lower.yes_ask * 100)
         no_target = 100 - lower_ask_c
         v.lower_depth = sum(
-            int(qty) for price, qty in lower_ob.get("no", [])
+            int(float(qty)) for price, qty in lower_ob.get("no", [])
             if _pc(price) == no_target
         )
 
@@ -331,7 +331,7 @@ async def _enrich_depths(violations: list, max_size: int) -> None:
         # NO ask at price Q = YES bid at (100 - Q). Depth = qty of YES bids at yes_bid.
         higher_bid_c = round(v.higher.yes_bid * 100)
         v.higher_depth = sum(
-            int(qty) for price, qty in higher_ob.get("yes", [])
+            int(float(qty)) for price, qty in higher_ob.get("yes", [])
             if _pc(price) == higher_bid_c
         )
 
@@ -373,18 +373,21 @@ async def _enrich_single_leg_depths(signals: list, max_size: int) -> None:
             f = float(p)
             return round(f * 100) if f < 1 else int(f)
 
+        def _qty(q) -> int:
+            return int(float(q))  # qty may be int or decimal string e.g. '500.00'
+
         is_no = getattr(sig, "side", "yes") == "no"
         if is_no:
             bid_c = round(sig.market.yes_bid * 100)
-            depth = sum(int(qty) for price, qty in ob.get("yes", []) if _pc(price) == bid_c)
+            depth = sum(_qty(qty) for price, qty in ob.get("yes", []) if _pc(price) == bid_c)
         else:
             ask_c = round(sig.market.yes_ask * 100)
             no_target = 100 - ask_c
             # Primary: NO bids at complementary price (standard Kalshi format)
-            depth = sum(int(qty) for price, qty in ob.get("no", []) if _pc(price) == no_target)
+            depth = sum(_qty(qty) for price, qty in ob.get("no", []) if _pc(price) == no_target)
             if depth == 0:
                 # Fallback: YES asks stored directly in yes key (some API versions)
-                depth = sum(int(qty) for price, qty in ob.get("yes", []) if _pc(price) == ask_c)
+                depth = sum(_qty(qty) for price, qty in ob.get("yes", []) if _pc(price) == ask_c)
         sig.avail_size = min(depth, max_size)
 
     await _asyncio.gather(*[_fetch_one(s) for s in signals])
