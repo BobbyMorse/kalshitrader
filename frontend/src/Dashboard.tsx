@@ -392,8 +392,8 @@ function StructuralAnomalyRow({ sig }: { sig: StructuralAnomaly }) {
             <span className={(sig.expected_edge ?? sig.net_edge) >= 0 ? "text-green-600 font-semibold" : "text-red-500 font-semibold"}>
               EV {fmtCents(sig.expected_edge ?? sig.net_edge)}/contract
             </span>
-            {sig.middle_prob > 0.01 && (
-              <span className="ml-1 text-sky-500">· {Math.round(sig.middle_prob * 100)}% both</span>
+            {(sig.middle_prob ?? 0) > 0.01 && (
+              <span className="ml-1 text-sky-500">· {Math.round((sig.middle_prob ?? 0) * 100)}% both</span>
             )}
           </div>
         </div>
