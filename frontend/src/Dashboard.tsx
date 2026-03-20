@@ -830,25 +830,27 @@ function SingleLegPositionRow({ pos }: { pos: SingleLegPosition }) {
           )}
           {isOpen && (() => {
             const isNo = pos.side === "no";
-            // For YES: entry_price=ask paid, current_ask=current ask (thesis indicator)
-            // For NO:  entry_price=NO paid (1-bid), current_ask=current yes_bid
             const entryAsk = pos.entry_price;
             const curAsk = pos.current_ask ?? entryAsk;
+            const entryBid = pos.entry_bid ?? 0;
+            const curBid = pos.current_bid;
             const askMoved = curAsk - entryAsk;
-            const askColor = askMoved > 0.001
-              ? "text-green-600"
-              : askMoved < -0.001 ? "text-red-500" : "text-slate-400";
-            const askArrow = askMoved > 0.001 ? "↑" : askMoved < -0.001 ? "↓" : "→";
+            const bidMoved = curBid - entryBid;
+            const trendColor = (d: number) => d > 0.001 ? "text-green-600" : d < -0.001 ? "text-red-500" : "text-slate-400";
+            const arrow = (d: number) => d > 0.001 ? "↑" : d < -0.001 ? "↓" : "→";
             return (
               <div className="mt-1.5">
                 <div className="flex justify-between text-[10px] mb-0.5">
                   <span className="text-slate-400 font-mono">
                     {isNo ? "no" : "ask"} {fmtCents(entryAsk)}
-                    <span className={`ml-1 font-semibold ${askColor}`}>
-                      {askArrow} {fmtCents(curAsk)}
+                    <span className={`ml-1 font-semibold ${trendColor(askMoved)}`}>
+                      {arrow(askMoved)} {fmtCents(curAsk)}
                     </span>
-                    <span className="text-slate-400 ml-2">
-                      bid {fmtCents(pos.current_bid)}
+                    <span className="ml-3">
+                      bid {fmtCents(entryBid)}
+                      <span className={`ml-1 font-semibold ${trendColor(bidMoved)}`}>
+                        {arrow(bidMoved)} {fmtCents(curBid)}
+                      </span>
                     </span>
                   </span>
                   <span className="text-slate-400">{progress}% to target</span>
