@@ -2,13 +2,14 @@
 Real-time price feed for digital option pricing.
 
 Sources:
-  Crypto (BTC, ETH, SOL): Binance WebSocket — sub-second push, no auth needed.
+  Crypto (BTC, ETH, SOL): Coinbase Exchange WebSocket — real-time push, no auth, US-accessible.
   Equities / FX / Commodities: Yahoo Finance batch quote API — real-time during
     market hours, polled every 30 s (one HTTP request covers all symbols).
+  Crypto fallback: CoinGecko REST API — polled every 60 s if WS is down.
 
 Usage:
     feed = PriceFeed()
-    await feed.start()          # launches Binance WS + first REST poll
+    await feed.start()          # launches Coinbase WS + first REST poll
     price = feed.get("BTC")     # returns latest price or None
     vol   = feed.vol("BTC")     # returns annual vol estimate
 """
@@ -39,16 +40,24 @@ _DEFAULT_VOL: Dict[str, float] = {
     "NGAS":   0.55,    # Natural gas — very volatile
 }
 
-# ── Binance WebSocket streams ────────────────────────────────────────────────
-_BINANCE_STREAMS = {
-    "btcusdt@miniTicker": "BTC",
-    "ethusdt@miniTicker": "ETH",
-    "solusdt@miniTicker": "SOL",
+# ── Coinbase Exchange WebSocket ───────────────────────────────────────────────
+# Public ticker channel, no auth required, works from US servers.
+_COINBASE_WS_URL = "wss://ws-feed.exchange.coinbase.com"
+_COINBASE_PRODUCTS = {
+    "BTC-USD": "BTC",
+    "ETH-USD": "ETH",
+    "SOL-USD": "SOL",
 }
-_BINANCE_WS_URL = (
-    "wss://stream.binance.com:9443/stream?streams="
-    + "/".join(_BINANCE_STREAMS.keys())
-)
+
+# ── CoinGecko REST fallback (crypto, polled every 60 s) ──────────────────────
+_COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price"
+_COINGECKO_IDS = {
+    "bitcoin":  "BTC",
+    "ethereum": "ETH",
+    "solana":   "SOL",
+}
+_COINGECKO_POLL_INTERVAL = 60.0
+_COINGECKO_TIMEOUT       = 8.0
 
 # ── Yahoo Finance symbols (batch-fetched) ────────────────────────────────────
 _YF_ASSETS: Dict[str, str] = {
@@ -72,7 +81,8 @@ _YF_TIMEOUT       = 8.0    # HTTP timeout
 class PriceFeed:
     """
     Maintains a live price dict updated by:
-      • Binance WebSocket (crypto — continuous push)
+      • Coinbase Exchange WebSocket (crypto — continuous push, US-friendly)
+      • CoinGecko REST fallback (crypto — polled every 60 s when WS is down)
       • Yahoo Finance REST (equities / FX / commodities — polled every 30 s)
     """
 
@@ -80,14 +90,17 @@ class PriceFeed:
         self._prices:    Dict[str, float] = {}
         self._updated:   Dict[str, float] = {}   # asset → monotonic timestamp
         self._tasks:     List[asyncio.Task] = []
+        self._ws_healthy: bool = False
 
     # ── Public API ───────────────────────────────────────────────────────────
 
     async def start(self) -> None:
         """Start background tasks. Call once on app startup."""
         await self._poll_yf()                              # warm up REST prices
-        self._tasks.append(asyncio.create_task(self._binance_ws_loop()))
+        await self._poll_coingecko()                       # warm up crypto prices
+        self._tasks.append(asyncio.create_task(self._coinbase_ws_loop()))
         self._tasks.append(asyncio.create_task(self._yf_poll_loop()))
+        self._tasks.append(asyncio.create_task(self._coingecko_poll_loop()))
         print(f"[PriceFeed] Started. Initial prices: "
               f"BTC={self._prices.get('BTC')} ETH={self._prices.get('ETH')} "
               f"SPX={self._prices.get('SPX')} WTI={self._prices.get('WTI')}")
@@ -109,34 +122,77 @@ class PriceFeed:
         """Return copy of current price dict (for logging / status)."""
         return dict(self._prices)
 
-    # ── Binance WebSocket ────────────────────────────────────────────────────
+    # ── Coinbase Exchange WebSocket ──────────────────────────────────────────
 
-    async def _binance_ws_loop(self) -> None:
-        """Subscribe to combined mini-ticker stream. Reconnects on error."""
+    async def _coinbase_ws_loop(self) -> None:
+        """Subscribe to Coinbase ticker channel. Reconnects on error."""
         import websockets  # type: ignore
         backoff = 2.0
         while True:
             try:
                 async with websockets.connect(
-                    _BINANCE_WS_URL,
+                    _COINBASE_WS_URL,
                     ping_interval=20,
                     ping_timeout=10,
                 ) as ws:
+                    # Subscribe to ticker channel for BTC, ETH, SOL
+                    sub = {
+                        "type": "subscribe",
+                        "product_ids": list(_COINBASE_PRODUCTS.keys()),
+                        "channels": ["ticker"],
+                    }
+                    await ws.send(json.dumps(sub))
                     backoff = 2.0
+                    self._ws_healthy = True
                     async for raw in ws:
                         msg = json.loads(raw)
-                        stream = msg.get("stream", "")
-                        data   = msg.get("data", {})
-                        asset  = _BINANCE_STREAMS.get(stream)
-                        if asset and data.get("c"):
-                            price = float(data["c"])
-                            self._prices[asset]  = price
-                            self._updated[asset] = time.monotonic()
+                        if msg.get("type") == "ticker":
+                            product = msg.get("product_id", "")
+                            asset   = _COINBASE_PRODUCTS.get(product)
+                            price_s = msg.get("price")
+                            if asset and price_s:
+                                self._prices[asset]  = float(price_s)
+                                self._updated[asset] = time.monotonic()
             except Exception as exc:
-                print(f"[PriceFeed] Binance WS error: {exc}. "
+                self._ws_healthy = False
+                print(f"[PriceFeed] Coinbase WS error: {exc}. "
                       f"Reconnecting in {backoff:.0f}s …")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 60.0)
+
+    # ── CoinGecko REST fallback ───────────────────────────────────────────────
+
+    async def _coingecko_poll_loop(self) -> None:
+        """Poll CoinGecko every 60 s as fallback when WS is unhealthy."""
+        while True:
+            await asyncio.sleep(_COINGECKO_POLL_INTERVAL)
+            # Always poll — acts as backup even when WS is running
+            await self._poll_coingecko()
+
+    async def _poll_coingecko(self) -> None:
+        try:
+            async with httpx.AsyncClient(timeout=_COINGECKO_TIMEOUT) as client:
+                resp = await client.get(
+                    _COINGECKO_URL,
+                    params={
+                        "ids": ",".join(_COINGECKO_IDS.keys()),
+                        "vs_currencies": "usd",
+                    },
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                if resp.status_code != 200:
+                    print(f"[PriceFeed] CoinGecko HTTP {resp.status_code}")
+                    return
+                data = resp.json()
+                for cg_id, asset in _COINGECKO_IDS.items():
+                    price = data.get(cg_id, {}).get("usd")
+                    if price:
+                        # Only update if WS hasn't updated in last 90 s (prefer WS)
+                        if self.age(asset) > 90.0:
+                            self._prices[asset]  = float(price)
+                            self._updated[asset] = time.monotonic()
+        except Exception as exc:
+            print(f"[PriceFeed] CoinGecko poll error: {exc}")
 
     # ── Yahoo Finance REST ───────────────────────────────────────────────────
 
@@ -155,6 +211,7 @@ class PriceFeed:
                     headers={"User-Agent": "Mozilla/5.0"},
                 )
                 if resp.status_code != 200:
+                    print(f"[PriceFeed] Yahoo Finance HTTP {resp.status_code}")
                     return
                 quotes = resp.json().get("quoteResponse", {}).get("result", [])
                 for q in quotes:
