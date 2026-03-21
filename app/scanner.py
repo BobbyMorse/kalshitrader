@@ -180,7 +180,7 @@ def find_digital_mispricing(
 
         expiry = sorted_markets[0].expiry_dt
         ttl    = expiry - now
-        if ttl < timedelta(minutes=15) or ttl > timedelta(days=7):
+        if ttl < timedelta(minutes=30) or ttl > timedelta(hours=48):
             n_ttl += 1
             continue
         t_years = ttl.total_seconds() / (365.25 * 24 * 3600)
@@ -207,21 +207,24 @@ def find_digital_mispricing(
                 n_rung_tail += 1
                 continue
 
-            # Sanity check: threshold must be within 20% of spot price
-            # (avoids stale/deep-ITM rungs where Kalshi price is just noise)
-            ratio = market.threshold / spot if not is_inverted else spot / market.threshold
-            if ratio < 0.80 or ratio > 1.25:
+            fair = digital_prob(spot, market.threshold, t_years, vol, is_inverted)
+
+            # Fair-value ATM gate: the BS model output IS the quality filter.
+            # If the model says >65% or <35%, the outcome is too certain —
+            # deep-ITM/OTM stale Kalshi orders create fake edges that never resolve.
+            # The Kalshi ask filter (0.30-0.70 above) ensures Kalshi also sees it
+            # as near-ATM; this gate ensures BS agrees.
+            if fair < 0.35 or fair > 0.65:
                 n_rung_tail += 1
                 continue
 
-            fair = digital_prob(spot, market.threshold, t_years, vol, is_inverted)
             raw_edge = abs(fair - market.mid())
 
             # ── YES signal: model says higher probability than Kalshi asking ──
             if fair - market.yes_ask >= min_edge:
                 target = round(fair - 0.03, 4)          # exit when bid ≈ fair
-                _fee = fee_rate * (market.yes_ask + target)
-                if target - market.yes_ask - _fee >= 0.02:
+                _gross = target - market.yes_ask
+                if _gross * (1.0 - fee_rate) >= 0.02:   # Kalshi: 7% of profit only
                     n_signal_yes += 1
                     signals.append(SingleLegSignal(
                         id=market.ticker,
@@ -239,11 +242,8 @@ def find_digital_mispricing(
             # ── NO signal: model says lower probability than Kalshi bidding ──
             elif market.yes_bid - fair >= min_edge:
                 target_ask = round(fair + 0.03, 4)      # exit when ask ≈ fair
-                _entry_no  = 1.0 - market.yes_bid
-                _exit_no   = 1.0 - target_ask
-                _fee = fee_rate * (_entry_no + _exit_no)
                 _gross = market.yes_bid - target_ask
-                if _gross - _fee >= 0.02:
+                if _gross * (1.0 - fee_rate) >= 0.02:   # Kalshi: 7% of profit only
                     n_signal_no += 1
                     signals.append(SingleLegSignal(
                         id=market.ticker,
@@ -834,11 +834,10 @@ def find_ladder_mean_reversion(
             # Target: exit when market.yes_bid closes within 2¢ of model fair value
             target_bid = round(fair_mid - 0.02, 4)
 
-            # Fee-aware R:R gate: net gain after 7% round-trip fee must be >= 2¢.
-            # Fee = 0.07 × (entry_ask + exit_bid). For a 70¢ entry → ~10¢ fee round-trip.
-            # Old gross-only gate (5¢) let through trades where fees > gain.
-            _fee = 0.07 * (market.yes_ask + target_bid)
-            if target_bid - market.yes_ask - _fee < 0.02:
+            # Fee-aware R:R gate: net gain after 7% profit fee must be >= 2¢.
+            # Kalshi charges 7% of profit only (not of entry+exit transaction value).
+            _gross = target_bid - market.yes_ask
+            if _gross * (1.0 - 0.07) < 0.02:
                 _dbg_inc(series, "rr_gate")
                 continue
 
@@ -1004,14 +1003,10 @@ def find_ladder_sell_expensive(
             # (stored in target_bid field; used as YES ask target for NO positions)
             target_ask = round(fair_mid + 0.02, 4)
 
-            # Fee-aware R:R gate for NO positions: net gain after 7% round-trip fee >= 2¢.
-            # Entry: buy NO at (1 - yes_bid). Exit: sell NO at (1 - target_ask).
-            # Fee = 0.07 × ((1-yes_bid) + (1-target_ask))
-            _entry_no = 1.0 - market.yes_bid
-            _exit_no  = 1.0 - target_ask
-            _fee = 0.07 * (_entry_no + _exit_no)
-            _gross = market.yes_bid - target_ask   # = exit_no - entry_no
-            if _gross - _fee < 0.02:
+            # Fee-aware R:R gate for NO positions: net gain after 7% profit fee >= 2¢.
+            # Kalshi charges 7% of profit only (not of transaction value).
+            _gross = market.yes_bid - target_ask   # gross gain per contract
+            if _gross * (1.0 - 0.07) < 0.02:
                 _dbg_inc(series, "rr_gate")
                 continue
 

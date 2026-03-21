@@ -895,21 +895,15 @@ async def _refresh_markets() -> None:
                       f"interp={interp:.2f} anomaly={sig.inversion:.2f} "
                       f"depth={sig.avail_size}")
 
-        if _config["auto_trade_inverted"] and _config["auto_trade"] and _config["paper_trading"]:
-            sell_new = 0
-            for sig in sell_exp:
-                if not _trader.is_positioned(sig.id):
-                    if _trader.execute_single_leg(sig):
-                        sell_new += 1
-            if sell_new:
-                print(f"[Refresh] Opened {sell_new} sell-expensive (NO) positions")
-            _sell_expensive_signals[:] = [s for s in _sell_expensive_signals if not _trader.is_positioned(s.id)]
+        # Sell-expensive auto-trading disabled: historical win rate 15% is too low.
+        # Signals still displayed for manual review.
+        _sell_expensive_signals[:] = [s for s in _sell_expensive_signals if not _trader.is_positioned(s.id)]
 
         # Digital option scan: Black-Scholes mispricing vs real-time spot prices
         spots = _price_feed.snapshot()
         if spots:
             vols = {a: _price_feed.vol(a) for a in spots}
-            digital = find_digital_mispricing(all_groups, spots, vols, min_edge=0.04,
+            digital = find_digital_mispricing(all_groups, spots, vols, min_edge=0.06,
                                               fee_rate=_config["fee_rate"], debug=True)
             if digital:
                 await _enrich_single_leg_depths(digital, _config["max_size"])
@@ -921,7 +915,21 @@ async def _refresh_markets() -> None:
                 for sig in digital[:3]:
                     print(f"  [DIGITAL] {sig.id}: ask={sig.market.yes_ask:.2f} "
                           f"target={sig.target_bid:.2f} edge={sig.inversion:.2f}")
-            # NOTE: digital auto-trade disabled — display only until model is validated
+            # Auto-trade digital signals: cap each at 25 contracts, max 1 per series
+            if _config.get("auto_trade_inverted") and _config.get("auto_trade") and _config.get("paper_trading"):
+                digital_new = 0
+                series_done: set = set()
+                for sig in digital:
+                    if _trader.is_positioned(sig.id):
+                        continue
+                    if sig.series in series_done:
+                        continue  # one digital position per series at a time
+                    sig.avail_size = min(sig.avail_size, 25)
+                    if _trader.execute_single_leg(sig):
+                        digital_new += 1
+                        series_done.add(sig.series)
+                if digital_new:
+                    print(f"[Refresh] Opened {digital_new} digital position(s)")
             _digital_signals[:] = [s for s in _digital_signals if not _trader.is_positioned(s.id)]
 
         best_near = f" best={near_misses[0].gross_edge:.3f}" if near_misses else ""

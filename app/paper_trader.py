@@ -245,7 +245,8 @@ class PaperTrader:
         for p in self._bucket_closed:
             result["bucket_arb"] = result.get("bucket_arb", 0.0) + p.realized_pnl
         for p in self._single_closed:
-            result["mispriced_leg"] = result.get("mispriced_leg", 0.0) + p.realized_pnl
+            strat = getattr(p, "strategy", "mispriced_leg")
+            result[strat] = result.get(strat, 0.0) + p.realized_pnl
         return result
 
     @property
@@ -713,8 +714,7 @@ class PaperTrader:
                 gain = pos.entry_bid - pos.current_bid
             else:
                 gain = pos.current_bid - pos.entry_price
-            exit_val = (1.0 - pos.current_bid) if is_no else pos.current_bid
-            fee = self.fee_rate * (pos.entry_price + exit_val)  # 7% of round-trip transaction value
+            fee = self.fee_rate * max(0.0, gain)  # Kalshi charges 7% of profit only
             pos.unrealized_pnl = round((gain - fee) * pos.size, 4)
 
             # Auto-exit: price normalized to near fair value
@@ -727,8 +727,7 @@ class PaperTrader:
                     gain = pos.entry_bid - pos.current_bid
                 else:
                     gain = pos.current_bid - pos.entry_price
-                exit_val = (1.0 - pos.current_bid) if is_no else pos.current_bid
-                fee = self.fee_rate * (pos.entry_price + exit_val)
+                fee = self.fee_rate * max(0.0, gain)  # Kalshi: 7% of profit only
                 pos.realized_pnl = round((gain - fee) * pos.size, 4)
                 pos.exit_price = pos.current_bid
                 pos.exit_time = now
@@ -759,8 +758,7 @@ class PaperTrader:
                     loss = pos.entry_bid - pos.current_bid  # negative = loss
                 else:
                     loss = pos.current_bid - pos.entry_price
-                exit_val = (1.0 - pos.current_bid) if is_no else pos.current_bid
-                fee = self.fee_rate * (pos.entry_price + exit_val)
+                fee = self.fee_rate * max(0.0, loss)  # Kalshi: no fee on losing trades
                 pos.realized_pnl = round((loss - fee) * pos.size, 4)
                 pos.exit_price = pos.current_bid
                 pos.exit_time = now
@@ -784,8 +782,7 @@ class PaperTrader:
                     gain = pos.entry_bid - pos.current_bid
                 else:
                     gain = pos.current_bid - pos.entry_price
-                exit_val = (1.0 - pos.current_bid) if is_no else pos.current_bid
-                fee = self.fee_rate * (pos.entry_price + exit_val)
+                fee = self.fee_rate * max(0.0, gain)  # Kalshi: 7% of profit only
                 pos.realized_pnl = round((gain - fee) * pos.size, 4)
                 pos.exit_price = pos.current_bid
                 pos.exit_time = now
@@ -812,8 +809,7 @@ class PaperTrader:
             gain = pos.entry_bid - pos.current_bid  # yes_bid_entry - yes_ask_now
         else:
             gain = pos.current_bid - pos.entry_price
-        exit_val = (1.0 - pos.current_bid) if is_no else pos.current_bid
-        fee = self.fee_rate * (pos.entry_price + exit_val)
+        fee = self.fee_rate * max(0.0, gain)  # Kalshi: 7% of profit only
         pos.realized_pnl = round((gain - fee) * pos.size, 4)
         pos.exit_price = pos.current_bid
         pos.exit_time = datetime.now(timezone.utc)

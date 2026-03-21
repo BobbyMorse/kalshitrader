@@ -194,7 +194,7 @@ class PriceFeed:
         except Exception as exc:
             print(f"[PriceFeed] CoinGecko poll error: {exc}")
 
-    # ── Yahoo Finance REST ───────────────────────────────────────────────────
+    # ── Yahoo Finance via yfinance library ──────────────────────────────────
 
     async def _yf_poll_loop(self) -> None:
         """Poll Yahoo Finance every _YF_POLL_INTERVAL seconds."""
@@ -203,23 +203,31 @@ class PriceFeed:
             await self._poll_yf()
 
     async def _poll_yf(self) -> None:
+        """Fetch prices using yfinance library (handles Yahoo auth automatically)."""
         try:
-            async with httpx.AsyncClient(timeout=_YF_TIMEOUT) as client:
-                resp = await client.get(
-                    _YF_URL,
-                    params={"symbols": _YF_SYMBOLS},
-                    headers={"User-Agent": "Mozilla/5.0"},
-                )
-                if resp.status_code != 200:
-                    print(f"[PriceFeed] Yahoo Finance HTTP {resp.status_code}")
-                    return
-                quotes = resp.json().get("quoteResponse", {}).get("result", [])
-                for q in quotes:
-                    sym   = q.get("symbol", "")
-                    price = q.get("regularMarketPrice")
-                    asset = _YF_ASSETS.get(sym)
-                    if asset and price:
-                        self._prices[asset]  = float(price)
-                        self._updated[asset] = time.monotonic()
+            import yfinance as yf
+            loop = asyncio.get_event_loop()
+
+            def _fetch_sync() -> Dict[str, float]:
+                results: Dict[str, float] = {}
+                try:
+                    tickers = yf.Tickers(" ".join(_YF_ASSETS.keys()))
+                    for sym, asset in _YF_ASSETS.items():
+                        try:
+                            p = tickers.tickers[sym].fast_info.last_price
+                            if p and float(p) > 0:
+                                results[asset] = float(p)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                return results
+
+            prices = await loop.run_in_executor(None, _fetch_sync)
+            for asset, price in prices.items():
+                self._prices[asset]  = price
+                self._updated[asset] = time.monotonic()
+            if prices:
+                print(f"[PriceFeed] YF updated: {list(prices.keys())}")
         except Exception as exc:
             print(f"[PriceFeed] Yahoo Finance poll error: {exc}")
