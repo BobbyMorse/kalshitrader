@@ -212,6 +212,8 @@ def _maybe_snapshot_pnl() -> None:
         "structural": round(_strat.get("structural_arb", 0.0), 4),
         "bucket": round(_strat.get("bucket_arb", 0.0), 4),
         "meanrev": round(_strat.get("mispriced_leg", 0.0) + _strat.get("mean_rev", 0.0), 4),
+        "sell_expensive": round(_strat.get("sell_expensive", 0.0), 4),
+        "digital": round(_strat.get("digital", 0.0), 4),
     })
     # Keep capped; no disk write here (REST refresh handles persistence)
     del _pnl_history[:-500]

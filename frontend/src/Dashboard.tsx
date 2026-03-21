@@ -1171,7 +1171,7 @@ export default function Dashboard() {
   const [tradedSignalIds, setTradedSignalIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState("signals");
   const [unseenTrades, setUnseenTrades] = useState(0);
-  const [stratFilter, setStratFilter] = useState<"all" | "threshold" | "structural" | "bucket" | "meanrev">("all");
+  const [stratFilter, setStratFilter] = useState<"all" | "threshold" | "structural" | "bucket" | "meanrev" | "sell_expensive" | "digital">("all");
   const seenTradeIds = useRef<Set<string>>(new Set());
 
   // Request browser notification permission on first render
@@ -1291,6 +1291,8 @@ export default function Dashboard() {
         structural: p.structural ?? 0,
         bucket: p.bucket ?? 0,
         meanrev: p.meanrev ?? 0,
+        sell_expensive: (p as any).sell_expensive ?? 0,
+        digital: (p as any).digital ?? 0,
       })),
     [pnlHistory]
   );
@@ -1695,17 +1697,17 @@ export default function Dashboard() {
                 <CardHeader className="pb-2">
                   <CardTitle>P&L History</CardTitle>
                   <div className="flex flex-wrap gap-1 pt-1">
-                    {(["all", "threshold", "structural", "bucket", "meanrev"] as const).map((s) => (
+                    {(["all", "threshold", "structural", "bucket", "meanrev", "sell_expensive", "digital"] as const).map((s) => (
                       <button
                         key={s}
                         onClick={() => setStratFilter(s)}
                         className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
                           stratFilter === s
-                            ? "bg-blue-600 text-white"
+                            ? s === "digital" ? "bg-blue-600 text-white" : s === "sell_expensive" ? "bg-red-600 text-white" : "bg-blue-600 text-white"
                             : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                         }`}
                       >
-                        {s === "all" ? "All" : s === "threshold" ? "Threshold" : s === "structural" ? "Structural" : s === "bucket" ? "Bucket" : "Mean-Rev"}
+                        {s === "all" ? "All" : s === "threshold" ? "Threshold" : s === "structural" ? "Structural" : s === "bucket" ? "Bucket" : s === "meanrev" ? "Mean-Rev" : s === "sell_expensive" ? "Sell-Exp" : "Digital"}
                       </button>
                     ))}
                   </div>
@@ -1733,6 +1735,8 @@ export default function Dashboard() {
                         {stratFilter === "structural" && <Area type="monotone" dataKey="structural" name="Structural Arb" stroke="#9333ea" fill="#f3e8ff" strokeWidth={2} />}
                         {stratFilter === "bucket" && <Area type="monotone" dataKey="bucket" name="Bucket Arb" stroke="#ea580c" fill="#ffedd5" strokeWidth={2} />}
                         {stratFilter === "meanrev" && <Area type="monotone" dataKey="meanrev" name="Mean-Rev" stroke="#0891b2" fill="#cffafe" strokeWidth={2} />}
+                        {stratFilter === "sell_expensive" && <Area type="monotone" dataKey="sell_expensive" name="Sell-Exp" stroke="#dc2626" fill="#fee2e2" strokeWidth={2} />}
+                        {stratFilter === "digital" && <Area type="monotone" dataKey="digital" name="Digital" stroke="#2563eb" fill="#dbeafe" strokeWidth={2} />}
                       </AreaChart>
                     </ResponsiveContainer>
                   )}
@@ -1798,6 +1802,8 @@ export default function Dashboard() {
                     ["Structural", "structural_arb"],
                     ["Bucket", "bucket_arb"],
                     ["Mean-Rev", "mispriced_leg"],
+                    ["Sell-Exp", "sell_expensive"],
+                    ["Digital", "digital"],
                   ] as const).map(([label, key]) => {
                     const st = stratStats[key];
                     if (!st || st.count === 0) return null;
