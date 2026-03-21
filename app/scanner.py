@@ -142,6 +142,7 @@ def find_digital_mispricing(
     min_edge: float = 0.06,            # model must differ from Kalshi by ≥ 6¢
     fee_rate: float = 0.07,
     top_n: int = 20,
+    debug: bool = True,
 ) -> List[SingleLegSignal]:
     """
     Compare every Kalshi rung price to its Black-Scholes fair value computed
@@ -159,13 +160,17 @@ def find_digital_mispricing(
     signals: List[SingleLegSignal] = []
     now = datetime.now(timezone.utc)
 
+    n_no_asset = n_no_spot = n_ttl = n_rung_tail = n_edge = n_fee = n_signal_yes = n_signal_no = 0
+
     for event_ticker, markets in groups.items():
         series = event_ticker.split("-")[0].upper()
         asset  = _SERIES_ASSET.get(series)
         if asset is None:
+            n_no_asset += 1
             continue
         spot = spots.get(asset)
         if not spot:
+            n_no_spot += 1
             continue
         vol = vols.get(asset, 0.20)
 
@@ -175,7 +180,8 @@ def find_digital_mispricing(
 
         expiry = sorted_markets[0].expiry_dt
         ttl    = expiry - now
-        if ttl < timedelta(minutes=15) or ttl > timedelta(days=2):
+        if ttl < timedelta(minutes=15) or ttl > timedelta(days=7):
+            n_ttl += 1
             continue
         t_years = ttl.total_seconds() / (365.25 * 24 * 3600)
 
@@ -197,15 +203,18 @@ def find_digital_mispricing(
                 continue
             # Near-the-money only (same tail filter as mean-rev scanner)
             if market.yes_ask < 0.20 or market.yes_ask > 0.80:
+                n_rung_tail += 1
                 continue
 
             fair = digital_prob(spot, market.threshold, t_years, vol, is_inverted)
+            raw_edge = abs(fair - market.mid())
 
             # ── YES signal: model says higher probability than Kalshi asking ──
             if fair - market.yes_ask >= min_edge:
                 target = round(fair - 0.03, 4)          # exit when bid ≈ fair
                 _fee = fee_rate * (market.yes_ask + target)
                 if target - market.yes_ask - _fee >= 0.02:
+                    n_signal_yes += 1
                     signals.append(SingleLegSignal(
                         id=market.ticker,
                         series=market.series,
@@ -217,7 +226,8 @@ def find_digital_mispricing(
                         side="yes",
                         strategy="digital",
                     ))
-
+                else:
+                    n_fee += 1
             # ── NO signal: model says lower probability than Kalshi bidding ──
             elif market.yes_bid - fair >= min_edge:
                 target_ask = round(fair + 0.03, 4)      # exit when ask ≈ fair
@@ -226,6 +236,7 @@ def find_digital_mispricing(
                 _fee = fee_rate * (_entry_no + _exit_no)
                 _gross = market.yes_bid - target_ask
                 if _gross - _fee >= 0.02:
+                    n_signal_no += 1
                     signals.append(SingleLegSignal(
                         id=market.ticker,
                         series=market.series,
@@ -237,6 +248,16 @@ def find_digital_mispricing(
                         side="no",
                         strategy="digital",
                     ))
+                else:
+                    n_fee += 1
+            else:
+                n_edge += 1
+
+    if debug:
+        print(f"[Digital] spots={list(spots.keys())} "
+              f"no_asset={n_no_asset} no_spot={n_no_spot} ttl_fail={n_ttl} "
+              f"tail={n_rung_tail} edge_fail={n_edge} fee_fail={n_fee} "
+              f"→ YES={n_signal_yes} NO={n_signal_no}")
 
     signals.sort(key=lambda s: s.inversion, reverse=True)
     return signals[:top_n]

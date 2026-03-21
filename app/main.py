@@ -909,8 +909,8 @@ async def _refresh_markets() -> None:
         spots = _price_feed.snapshot()
         if spots:
             vols = {a: _price_feed.vol(a) for a in spots}
-            digital = find_digital_mispricing(all_groups, spots, vols, min_edge=0.06,
-                                              fee_rate=_config["fee_rate"])
+            digital = find_digital_mispricing(all_groups, spots, vols, min_edge=0.04,
+                                              fee_rate=_config["fee_rate"], debug=True)
             if digital:
                 await _enrich_single_leg_depths(digital, _config["max_size"])
             digital = [s for s in digital if s.avail_size > 0]
