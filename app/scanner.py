@@ -201,9 +201,13 @@ def find_digital_mispricing(
                 continue
             if market.threshold <= 0:
                 continue
-            # Near-the-money only — tighter than mean-rev (0.30-0.70) to avoid
-            # deep tail markets where BS model has no predictive power
+            # Near-the-money only: both bid AND ask must be in 0.20-0.80 range.
+            # Stale asks (e.g. 65¢ from when WTI was at $98) with near-zero bids
+            # create fake signals — filter them by requiring a meaningful YES bid.
             if market.yes_ask < 0.30 or market.yes_ask > 0.70:
+                n_rung_tail += 1
+                continue
+            if market.yes_bid < 0.20:   # stale ask / dead market — no real YES buyer
                 n_rung_tail += 1
                 continue
 
@@ -800,8 +804,10 @@ def find_ladder_mean_reversion(
             # Liquidity: middle rung must have active bid and tight spread.
             # Wide spreads create false anomalies (mid is far from ask) and make
             # the target land below entry, guaranteeing a loss on exit.
+            # Max spread 0.12: with 5¢ stop on ask, a 12¢ spread means the bid
+            # is already 12¢ below ask at stop → ~17¢ loss per contract.
             spread = market.yes_ask - market.yes_bid
-            if market.yes_bid < 0.05 or spread > 0.25:
+            if market.yes_bid < 0.05 or spread > 0.12:
                 _dbg_inc(series, "middle_illiquid")
                 continue
             # Neighbors must have valid prices and not be knife-edge extreme rungs.

@@ -520,7 +520,7 @@ async def _on_tick(ticker: str, bid_cents: int, ask_cents: int) -> None:
                 # Auto-trading on ticks causes dozens of positions per minute — never do this.
                 inverted = find_ladder_mean_reversion(
                     {event_ticker: group_markets},
-                    min_anomaly=0.05,
+                    min_anomaly=0.09,
                     top_n=5,
                     tick_times=_tick_times,
                 )
@@ -847,7 +847,7 @@ async def _refresh_markets() -> None:
         # Ladder mean-reversion scan: find rungs cheap relative to both neighbors
         # Pass tick_times so the stale-quote filter can confirm middle rung is lagging.
         # debug=True prints per-series filter breakdown to logs (visible in Fly.io logs).
-        inverted = find_ladder_mean_reversion(all_groups, min_anomaly=0.05, top_n=20,
+        inverted = find_ladder_mean_reversion(all_groups, min_anomaly=0.09, top_n=20,
                                               tick_times=_tick_times, debug=True)
         # Enrich with real ask-side depth before display or trading
         if inverted:
