@@ -201,8 +201,16 @@ def find_digital_mispricing(
                 continue
             if market.threshold <= 0:
                 continue
-            # Near-the-money only (same tail filter as mean-rev scanner)
-            if market.yes_ask < 0.20 or market.yes_ask > 0.80:
+            # Near-the-money only — tighter than mean-rev (0.30-0.70) to avoid
+            # deep tail markets where BS model has no predictive power
+            if market.yes_ask < 0.30 or market.yes_ask > 0.70:
+                n_rung_tail += 1
+                continue
+
+            # Sanity check: threshold must be within 20% of spot price
+            # (avoids stale/deep-ITM rungs where Kalshi price is just noise)
+            ratio = market.threshold / spot if not is_inverted else spot / market.threshold
+            if ratio < 0.80 or ratio > 1.25:
                 n_rung_tail += 1
                 continue
 
@@ -913,8 +921,15 @@ def find_ladder_sell_expensive(
             _dbg[series] = {}
         _dbg[series][reason] = _dbg[series].get(reason, 0) + 1
 
+    # Step-function economic data markets: prices collapse to 0/100 at release →
+    # neighbors become knife-edge immediately, generating false sell-expensive signals.
+    _SELL_EXP_EXCLUDED = {"KXGDP", "KXCPI", "KXFED", "KXPCE", "KXPPI", "KXUNRATE"}
+
     for event_ticker, markets in groups.items():
         series = event_ticker.split("-")[0].upper()
+        if series in _SELL_EXP_EXCLUDED:
+            _dbg_inc(series, "excluded_series")
+            continue
         if len(markets) < 3:
             _dbg_inc(series, "too_few_markets")
             continue

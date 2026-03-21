@@ -921,15 +921,8 @@ async def _refresh_markets() -> None:
                 for sig in digital[:3]:
                     print(f"  [DIGITAL] {sig.id}: ask={sig.market.yes_ask:.2f} "
                           f"target={sig.target_bid:.2f} edge={sig.inversion:.2f}")
-            if _config["auto_trade_inverted"] and _config["auto_trade"] and _config["paper_trading"]:
-                dig_new = 0
-                for sig in digital:
-                    if not _trader.is_positioned(sig.id):
-                        if _trader.execute_single_leg(sig):
-                            dig_new += 1
-                if dig_new:
-                    print(f"[Refresh] Opened {dig_new} digital position(s)")
-                _digital_signals[:] = [s for s in _digital_signals if not _trader.is_positioned(s.id)]
+            # NOTE: digital auto-trade disabled — display only until model is validated
+            _digital_signals[:] = [s for s in _digital_signals if not _trader.is_positioned(s.id)]
 
         best_near = f" best={near_misses[0].gross_edge:.3f}" if near_misses else ""
         print(
