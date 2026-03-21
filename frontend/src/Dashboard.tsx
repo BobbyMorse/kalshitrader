@@ -1890,46 +1890,79 @@ export default function Dashboard() {
               </Card>
             )}
 
-            {/* Open single-leg positions */}
-            {openSinglePos.length > 0 && (
-              <Card className="rounded-3xl shadow-sm border-orange-100">
-                <CardHeader className="flex flex-row items-center justify-between">
-                  <CardTitle className="text-orange-700">Open Mean-Reversion Positions ({openSinglePos.length})</CardTitle>
-                  <button
-                    className="text-xs bg-red-500 text-white rounded-xl px-3 py-1.5 font-semibold hover:bg-red-600"
-                    onClick={async () => {
-                      if (!confirm(`Flatten all ${openSinglePos.length} open mean-reversion positions at current market prices?`)) return;
-                      const res = await fetch(`${API}/inverted/flatten-all`, { method: "POST" });
-                      const d = await res.json().catch(() => ({}));
-                      alert(res.ok ? `Closed ${d.closed} positions, P&L: ${d.total_pnl?.toFixed(2)}` : "Failed: " + (d.detail || res.statusText));
-                    }}
-                  >
-                    Flatten All
-                  </button>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {openSinglePos.map((p) => (
-                    <SingleLegPositionRow key={p.id} pos={p} />
-                  ))}
-                </CardContent>
-              </Card>
-            )}
+            {/* ── Mean-Reversion positions ── */}
+            {(() => {
+              const open   = openSinglePos.filter(p => p.strategy === "mean_rev" || p.strategy === "mispriced_leg" || !p.strategy);
+              const closed = closedSinglePos.filter(p => p.strategy === "mean_rev" || p.strategy === "mispriced_leg" || !p.strategy);
+              if (open.length === 0 && closed.length === 0) return null;
+              return (<>
+                {open.length > 0 && (
+                  <Card className="rounded-3xl shadow-sm border-orange-100">
+                    <CardHeader className="flex flex-row items-center justify-between">
+                      <CardTitle className="text-orange-700">🎯 Mean-Rev — Open ({open.length})</CardTitle>
+                      <button className="text-xs bg-red-500 text-white rounded-xl px-3 py-1.5 font-semibold hover:bg-red-600"
+                        onClick={async () => {
+                          if (!confirm(`Flatten all ${open.length} open mean-reversion positions?`)) return;
+                          const res = await fetch(`${API}/inverted/flatten-all`, { method: "POST" });
+                          const d = await res.json().catch(() => ({}));
+                          alert(res.ok ? `Closed ${d.closed} positions, P&L: ${d.total_pnl?.toFixed(2)}` : "Failed: " + (d.detail || res.statusText));
+                        }}>Flatten All</button>
+                    </CardHeader>
+                    <CardContent className="space-y-2">{open.map(p => <SingleLegPositionRow key={p.id} pos={p} />)}</CardContent>
+                  </Card>
+                )}
+                {closed.length > 0 && (
+                  <Card className="rounded-3xl shadow-sm border-orange-100 opacity-80">
+                    <CardHeader><CardTitle className="text-orange-700">🎯 Mean-Rev — Closed ({closed.length})</CardTitle></CardHeader>
+                    <CardContent className="space-y-2">{[...closed].reverse().map(p => <SingleLegPositionRow key={p.id} pos={p} />)}</CardContent>
+                  </Card>
+                )}
+              </>);
+            })()}
 
-            {/* Closed single-leg positions */}
-            {closedSinglePos.length > 0 && (
-              <Card className="rounded-3xl shadow-sm border-orange-100">
-                <CardHeader>
-                  <CardTitle className="text-orange-700">Closed Mean-Reversion Positions ({closedSinglePos.length})</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {[...closedSinglePos].reverse().map((p) => (
-                    <SingleLegPositionRow key={p.id} pos={p} />
-                  ))}
-                </CardContent>
-              </Card>
-            )}
+            {/* ── Sell-Expensive (NO) positions ── */}
+            {(() => {
+              const open   = openSinglePos.filter(p => p.strategy === "sell_expensive");
+              const closed = closedSinglePos.filter(p => p.strategy === "sell_expensive");
+              if (open.length === 0 && closed.length === 0) return null;
+              return (<>
+                {open.length > 0 && (
+                  <Card className="rounded-3xl shadow-sm border-red-100">
+                    <CardHeader><CardTitle className="text-red-700">📉 Sell-Exp — Open ({open.length})</CardTitle></CardHeader>
+                    <CardContent className="space-y-2">{open.map(p => <SingleLegPositionRow key={p.id} pos={p} />)}</CardContent>
+                  </Card>
+                )}
+                {closed.length > 0 && (
+                  <Card className="rounded-3xl shadow-sm border-red-100 opacity-80">
+                    <CardHeader><CardTitle className="text-red-700">📉 Sell-Exp — Closed ({closed.length})</CardTitle></CardHeader>
+                    <CardContent className="space-y-2">{[...closed].reverse().map(p => <SingleLegPositionRow key={p.id} pos={p} />)}</CardContent>
+                  </Card>
+                )}
+              </>);
+            })()}
 
-            {openPos.length === 0 && closedPos.length === 0 && openBucketPos.length === 0 && closedBucketPos.length === 0 && openSinglePos.length === 0 && (
+            {/* ── Digital option positions ── */}
+            {(() => {
+              const open   = openSinglePos.filter(p => p.strategy === "digital");
+              const closed = closedSinglePos.filter(p => p.strategy === "digital");
+              if (open.length === 0 && closed.length === 0) return null;
+              return (<>
+                {open.length > 0 && (
+                  <Card className="rounded-3xl shadow-sm border-blue-100">
+                    <CardHeader><CardTitle className="text-blue-700">📡 Digital — Open ({open.length})</CardTitle></CardHeader>
+                    <CardContent className="space-y-2">{open.map(p => <SingleLegPositionRow key={p.id} pos={p} />)}</CardContent>
+                  </Card>
+                )}
+                {closed.length > 0 && (
+                  <Card className="rounded-3xl shadow-sm border-blue-100 opacity-80">
+                    <CardHeader><CardTitle className="text-blue-700">📡 Digital — Closed ({closed.length})</CardTitle></CardHeader>
+                    <CardContent className="space-y-2">{[...closed].reverse().map(p => <SingleLegPositionRow key={p.id} pos={p} />)}</CardContent>
+                  </Card>
+                )}
+              </>);
+            })()}
+
+            {openPos.length === 0 && closedPos.length === 0 && openBucketPos.length === 0 && closedBucketPos.length === 0 && openSinglePos.length === 0 && closedSinglePos.length === 0 && (
               <div className="py-12 text-center text-sm text-slate-400">
                 No positions yet — start the bot to begin trading.
               </div>
