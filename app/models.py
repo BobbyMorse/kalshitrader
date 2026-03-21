@@ -283,20 +283,26 @@ class SingleLegSignal:
     series: str
     expiry_dt: datetime
     market: ThresholdMarket         # the cheap middle rung
-    adj_higher: ThresholdMarket     # upper threshold neighbor (lower price)
-    inversion: float                # anomaly: interpolated_mid - market.mid() (>0 = cheap)
-    target_bid: float               # auto-exit when market.yes_bid reaches this
-    detected_at: datetime
+    adj_higher: Optional[ThresholdMarket] = None  # upper threshold neighbor (None for digital signals)
+    inversion: float = 0.0          # anomaly: interpolated_mid - market.mid() (>0 = cheap)
+    target_bid: float = 0.0         # auto-exit when market.yes_bid reaches this
+    detected_at: datetime = None    # type: ignore[assignment]
     adj_lower: Optional[ThresholdMarket] = None   # lower threshold neighbor (higher price)
     avail_size: int = 0             # L2 depth at entry price; 0 = no depth / not yet fetched
     side: str = "yes"               # "yes" = buy YES (mean-rev); "no" = buy NO (sell expensive)
+    strategy: str = "mean_rev"      # "mean_rev" | "sell_expensive" | "digital"
 
     def to_dict(self) -> dict:
-        if self.adj_lower is not None:
-            live_interp = round((self.adj_lower.mid() + self.adj_higher.mid()) / 2, 4)
+        if self.adj_higher is not None:
+            if self.adj_lower is not None:
+                live_interp = round((self.adj_lower.mid() + self.adj_higher.mid()) / 2, 4)
+            else:
+                live_interp = round(self.adj_higher.mid(), 4)
+            live_anomaly = round(live_interp - self.market.mid(), 4)
         else:
-            live_interp = round(self.adj_higher.mid(), 4)
-        live_anomaly = round(live_interp - self.market.mid(), 4)
+            # digital signal: no neighbor context; use stored inversion as-is
+            live_interp = round(self.market.mid() + self.inversion, 4)
+            live_anomaly = self.inversion
         d = {
             "id": self.id,
             "series": self.series,
@@ -304,20 +310,21 @@ class SingleLegSignal:
             "ticker": self.market.ticker,
             "threshold": self.market.threshold,
             "title": self.market.title,
-            "adj_ticker": self.adj_higher.ticker,
-            "adj_threshold": self.adj_higher.threshold,
-            "adj_title": self.adj_higher.title,
+            "adj_ticker": self.adj_higher.ticker if self.adj_higher else "",
+            "adj_threshold": self.adj_higher.threshold if self.adj_higher else 0,
+            "adj_title": self.adj_higher.title if self.adj_higher else "",
             "ask": round(self.market.yes_ask, 4),
             "bid": round(self.market.yes_bid, 4),
-            "adj_ask": round(self.adj_higher.yes_ask, 4),
-            "adj_bid": round(self.adj_higher.yes_bid, 4),
+            "adj_ask": round(self.adj_higher.yes_ask, 4) if self.adj_higher else 0,
+            "adj_bid": round(self.adj_higher.yes_bid, 4) if self.adj_higher else 0,
             "inversion": live_anomaly,
             "interp_mid": live_interp,
             "target_bid": round(self.target_bid, 4),
-            "detected_at": self.detected_at.isoformat(),
+            "detected_at": self.detected_at.isoformat() if self.detected_at else "",
             "event_ticker": self.market.event_ticker,
             "avail_size": self.avail_size,
             "side": self.side,
+            "strategy": self.strategy,
         }
         if self.adj_lower is not None:
             d["adj_lower_ticker"] = self.adj_lower.ticker

@@ -627,14 +627,15 @@ class PaperTrader:
         pos_id = str(uuid.uuid4())[:8]
         now = datetime.now(timezone.utc)
 
+        sig_strategy = getattr(sig, "strategy", None)
         if is_no:
-            strategy = "sell_expensive"
+            strategy = sig_strategy or "sell_expensive"
             entry_price = 1.0 - sig.market.yes_bid   # NO ask = 1 - yes_bid
             entry_bid_ref = sig.market.yes_bid        # YES bid at entry (stop-loss reference)
             current_bid_init = sig.market.yes_ask     # track YES ask for NO positions
             current_ask_init = sig.market.yes_bid     # opposite side
         else:
-            strategy = "mean_rev"
+            strategy = sig_strategy or "mean_rev"
             entry_price = sig.market.yes_ask
             entry_bid_ref = sig.market.yes_bid
             current_bid_init = sig.market.yes_bid
@@ -647,7 +648,7 @@ class PaperTrader:
             expiry_dt=sig.expiry_dt,
             ticker=sig.market.ticker,
             threshold=sig.market.threshold,
-            adj_ticker=sig.adj_higher.ticker,
+            adj_ticker=sig.adj_higher.ticker if sig.adj_higher else "",
             size=size,
             entry_price=entry_price,
             entry_bid=entry_bid_ref,
@@ -661,9 +662,9 @@ class PaperTrader:
             entry_inversion=sig.inversion,
             entry_interp_mid=sig.target_bid,
             entry_adj_lower_bid=sig.adj_lower.yes_bid if sig.adj_lower else 0.0,
-            entry_adj_higher_bid=sig.adj_higher.yes_bid,
+            entry_adj_higher_bid=sig.adj_higher.yes_bid if sig.adj_higher else 0.0,
             entry_adj_lower_threshold=sig.adj_lower.threshold if sig.adj_lower else 0.0,
-            entry_adj_higher_threshold=sig.adj_higher.threshold,
+            entry_adj_higher_threshold=sig.adj_higher.threshold if sig.adj_higher else 0.0,
         )
         if is_no:
             # P&L = yes_bid_entry - yes_ask_now (current_bid stores yes_ask for NO pos)

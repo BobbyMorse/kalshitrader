@@ -216,6 +216,7 @@ export interface InvertedLegSignal {
   event_ticker?: string;
   avail_size: number;       // L2 depth at entry price (0 = no depth / not fetched)
   side?: string;            // "yes" = buy YES (mean-rev); "no" = buy NO (sell expensive)
+  strategy?: string;        // "mean_rev" | "sell_expensive" | "digital"
 }
 
 export interface SingleLegPosition {
@@ -262,6 +263,7 @@ export interface WsMessage {
   structural_near_misses?: StructuralAnomaly[];
   inverted_legs?: InvertedLegSignal[];
   sell_expensive_legs?: InvertedLegSignal[];
+  digital_signals?: InvertedLegSignal[];
   positions?: (Position | BucketPosition | SingleLegPosition)[];
   trades?: TradeRecord[];
   pnl_history?: PnlPoint[];

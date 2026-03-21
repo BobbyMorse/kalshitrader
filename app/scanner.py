@@ -83,6 +83,165 @@ def _lognormal_fair(threshold: float, mu: float, sigma: float) -> float:
     from scipy.stats import norm
     return float(norm.cdf((mu - np.log(threshold)) / sigma))
 
+
+# ── Digital option pricer + scanner ──────────────────────────────────────────
+
+# Maps Kalshi series prefix → price feed asset key
+_SERIES_ASSET: Dict[str, str] = {
+    "KXBTCD":    "BTC",
+    "KXBTCH":    "BTC",
+    "KXETHD":    "ETH",
+    "KXSOLANA":  "SOL",
+    "KXWTI":     "WTI",
+    "KXOIL":     "WTI",
+    "KXGOLD":    "GOLD",
+    "KXSILVER":  "SILVER",
+    "KXSPX":     "SPX",
+    "KXNDAQ":    "NDX",
+    "KXDXY":     "DXY",
+    "KXEURUSD":  "EURUSD",
+    "KXGBPUSD":  "GBPUSD",
+    "KXUS10Y":   "TNX",
+    "KXNGAS":    "NGAS",
+    "KXNGASMAX": "NGAS",
+    "KXNGASMIN": "NGAS",
+}
+
+
+def digital_prob(
+    spot: float,
+    strike: float,
+    t_years: float,
+    vol_annual: float,
+    inverted: bool = False,
+) -> float:
+    """
+    Black-Scholes probability that a log-normal asset closes above (or below)
+    a threshold at time t.
+
+    P(S_T > K) = Φ(d₂)  where d₂ = (log(S/K) - ½σ²T) / (σ√T)
+
+    Uses zero drift (risk-neutral with r ≈ 0 over prediction-market horizons).
+    Set inverted=True for "below K" markets (price increases with threshold).
+    """
+    from scipy.stats import norm as _norm
+    if t_years <= 1e-9 or vol_annual <= 0 or spot <= 0 or strike <= 0:
+        result = 1.0 if spot > strike else 0.0
+        return 1.0 - result if inverted else result
+    d2 = (np.log(spot / strike) - 0.5 * vol_annual ** 2 * t_years) / (
+        vol_annual * np.sqrt(t_years)
+    )
+    prob = float(_norm.cdf(d2))
+    return 1.0 - prob if inverted else prob
+
+
+def find_digital_mispricing(
+    groups: Dict[str, List[ThresholdMarket]],
+    spots: Dict[str, float],           # asset → current spot price
+    vols:  Dict[str, float],           # asset → annual vol
+    min_edge: float = 0.06,            # model must differ from Kalshi by ≥ 6¢
+    fee_rate: float = 0.07,
+    top_n: int = 20,
+) -> List[SingleLegSignal]:
+    """
+    Compare every Kalshi rung price to its Black-Scholes fair value computed
+    from a real-time external spot price.
+
+    Signal generated when |model_prob - kalshi_mid| >= min_edge AND the trade
+    passes a fee-aware net-profit gate (net gain at target ≥ 2¢).
+
+      model > yes_ask  → buy YES (market underpriced)
+      model < yes_bid  → buy NO  (market overpriced)
+
+    Only works for series in _SERIES_ASSET where we have a live spot price.
+    """
+    from datetime import datetime, timedelta, timezone
+    signals: List[SingleLegSignal] = []
+    now = datetime.now(timezone.utc)
+
+    for event_ticker, markets in groups.items():
+        series = event_ticker.split("-")[0].upper()
+        asset  = _SERIES_ASSET.get(series)
+        if asset is None:
+            continue
+        spot = spots.get(asset)
+        if not spot:
+            continue
+        vol = vols.get(asset, 0.20)
+
+        sorted_markets = sorted(markets, key=lambda m: m.threshold)
+        if len(sorted_markets) < 2:
+            continue
+
+        expiry = sorted_markets[0].expiry_dt
+        ttl    = expiry - now
+        if ttl < timedelta(minutes=15) or ttl > timedelta(days=2):
+            continue
+        t_years = ttl.total_seconds() / (365.25 * 24 * 3600)
+
+        # Detect inverted series (prices INCREASE with threshold → "below X" markets)
+        priced = [m for m in sorted_markets if m.yes_ask > 0 and m.yes_bid > 0]
+        if len(priced) >= 3:
+            n_increasing = sum(
+                1 for i in range(len(priced) - 1)
+                if priced[i].yes_ask < priced[i + 1].yes_ask
+            )
+            is_inverted = n_increasing > len(priced) // 2
+        else:
+            is_inverted = False
+
+        for market in sorted_markets:
+            if market.yes_bid <= 0 or market.yes_ask <= 0:
+                continue
+            if market.threshold <= 0:
+                continue
+            # Near-the-money only (same tail filter as mean-rev scanner)
+            if market.yes_ask < 0.20 or market.yes_ask > 0.80:
+                continue
+
+            fair = digital_prob(spot, market.threshold, t_years, vol, is_inverted)
+
+            # ── YES signal: model says higher probability than Kalshi asking ──
+            if fair - market.yes_ask >= min_edge:
+                target = round(fair - 0.03, 4)          # exit when bid ≈ fair
+                _fee = fee_rate * (market.yes_ask + target)
+                if target - market.yes_ask - _fee >= 0.02:
+                    signals.append(SingleLegSignal(
+                        id=market.ticker,
+                        series=market.series,
+                        expiry_dt=market.expiry_dt,
+                        market=market,
+                        inversion=round(fair - market.mid(), 4),
+                        target_bid=target,
+                        detected_at=now,
+                        side="yes",
+                        strategy="digital",
+                    ))
+
+            # ── NO signal: model says lower probability than Kalshi bidding ──
+            elif market.yes_bid - fair >= min_edge:
+                target_ask = round(fair + 0.03, 4)      # exit when ask ≈ fair
+                _entry_no  = 1.0 - market.yes_bid
+                _exit_no   = 1.0 - target_ask
+                _fee = fee_rate * (_entry_no + _exit_no)
+                _gross = market.yes_bid - target_ask
+                if _gross - _fee >= 0.02:
+                    signals.append(SingleLegSignal(
+                        id=market.ticker,
+                        series=market.series,
+                        expiry_dt=market.expiry_dt,
+                        market=market,
+                        inversion=round(market.mid() - fair, 4),
+                        target_bid=target_ask,
+                        detected_at=now,
+                        side="no",
+                        strategy="digital",
+                    ))
+
+    signals.sort(key=lambda s: s.inversion, reverse=True)
+    return signals[:top_n]
+
+
 _T_RE = re.compile(r"-T([\d.]+)$", re.IGNORECASE)
 _BARE_FLOAT_RE = re.compile(r"-(\d+\.\d+)$")    # bare decimal: KXAAAGASM-26MAR31-4.50
 _NP_RE = re.compile(r"-[NP]([\d.]+)$", re.IGNORECASE)  # N/P prefix: KXNGASMIN-26DEC31-N2.80
@@ -844,6 +1003,7 @@ def find_ladder_sell_expensive(
                 target_bid=target_ask,   # YES ask target for exit (stored in target_bid)
                 detected_at=now,
                 side="no",
+                strategy="sell_expensive",
             ))
 
     signals.sort(key=lambda s: s.inversion, reverse=True)

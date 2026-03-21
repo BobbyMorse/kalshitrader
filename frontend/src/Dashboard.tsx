@@ -505,6 +505,82 @@ function InvertedLegRow({ sig }: { sig: InvertedLegSignal }) {
   );
 }
 
+// ── Digital signal row ─────────────────────────────────────────────────────────
+
+function DigitalSignalRow({ sig }: { sig: InvertedLegSignal }) {
+  const [trading, setTrading] = useState(false);
+  const [traded, setTraded] = useState(false);
+
+  async function handleTrade() {
+    if (trading || traded) return;
+    const side = sig.side === "no" ? "NO" : "YES";
+    const price = sig.side === "no" ? fmtCents(sig.bid) : fmtCents(sig.ask);
+    if (!confirm(`Buy ${side} on ${sig.ticker} @ ${price}, target exit ≥ ${fmtCents(sig.target_bid)}?`)) return;
+    setTrading(true);
+    try {
+      const res = await fetch(`${API}/digital/${encodeURIComponent(sig.ticker)}/trade`, { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Trade failed (${res.status}): ${err.detail || err.message || res.statusText || "unknown error"}`);
+      } else {
+        setTraded(true);
+      }
+    } catch (e) {
+      alert(`Network error: ${e}`);
+    } finally {
+      setTrading(false);
+    }
+  }
+
+  const sideLabel = sig.side === "no" ? "NO overpriced" : "YES underpriced";
+  const edgeCents = Math.round(sig.inversion * 100);
+  const targetCents = Math.round(sig.target_bid * 100);
+
+  return (
+    <div className="rounded-xl border border-blue-200 bg-white p-3 text-xs">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-semibold text-slate-700">{sig.series}</span>
+            <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">DIGITAL</span>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${sig.side === "no" ? "bg-red-50 text-red-600" : "bg-green-50 text-green-600"}`}>
+              {sideLabel}
+            </span>
+            <span className="text-[10px] text-slate-400">expires {expiryIn(sig.expiry)}</span>
+            {sig.event_ticker && (
+              <a href={kalshiUrl(sig.event_ticker)} target="_blank" rel="noopener noreferrer"
+                 className="text-[10px] text-sky-500 hover:text-sky-700 flex items-center gap-0.5">
+                <ExternalLink className="h-3 w-3" />Kalshi
+              </a>
+            )}
+          </div>
+          <div className="mt-1 flex items-center gap-1 font-mono text-[10px] flex-wrap">
+            <span className="bg-blue-50 border border-blue-200 text-blue-700 rounded px-1.5 py-0.5 font-semibold">
+              {sig.title || fmtThreshold(sig.threshold)} bid {fmtCents(sig.bid)}/ask {fmtCents(sig.ask)}
+            </span>
+          </div>
+          <div className="mt-0.5 text-[10px] text-blue-600 font-semibold">
+            BS fair: {fmtCents(sig.interp_mid)} · edge: {edgeCents}¢ · target: {targetCents}¢
+          </div>
+        </div>
+        <button
+          onClick={handleTrade}
+          disabled={trading || traded}
+          className={`shrink-0 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors ${
+            traded
+              ? "bg-green-100 text-green-600 cursor-default"
+              : trading
+              ? "bg-slate-100 text-slate-400 cursor-wait"
+              : "bg-blue-500 text-white hover:bg-blue-600 active:bg-blue-700"
+          }`}
+        >
+          {traded ? "Traded ✓" : trading ? "…" : "Trade"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Near-miss row ─────────────────────────────────────────────────────────────
 
 function NearMissRow({ sig, threshold }: { sig: ViolationSignal; threshold: number }) {
@@ -807,7 +883,13 @@ function SingleLegPositionRow({ pos }: { pos: SingleLegPosition }) {
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="font-mono text-xs text-slate-400">{pos.id}</span>
             <span className="font-semibold text-slate-800">{pos.series}</span>
-            <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">MEAN-REV</span>
+            {(pos as any).strategy === "digital" ? (
+              <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">DIGITAL</span>
+            ) : (pos as any).strategy === "sell_expensive" ? (
+              <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-medium">SELL-EXP</span>
+            ) : (
+              <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium">MEAN-REV</span>
+            )}
             <a href={kalshiUrl(pos.ticker.replace(/-T[\d.]+$/i, "").replace(/-\d+$/, ""))}
                target="_blank" rel="noopener noreferrer"
                className="text-[10px] text-sky-500 hover:text-sky-700 flex items-center gap-0.5">
@@ -1073,6 +1155,8 @@ export default function Dashboard() {
     structuralAnomalies,
     structuralNearMisses,
     invertedLegs,
+    sellExpensiveLegs,
+    digitalSignals,
     positions,
     trades,
     pnlHistory,
@@ -1119,7 +1203,7 @@ export default function Dashboard() {
   }, [activeTab]);
 
   // Separate threshold vs bucket vs single-leg positions
-  const SINGLE_LEG_STRATEGIES = new Set(["mispriced_leg", "mean_rev", "sell_expensive", "limit_ladder"]);
+  const SINGLE_LEG_STRATEGIES = new Set(["mispriced_leg", "mean_rev", "sell_expensive", "limit_ladder", "digital"]);
   const thresholdPositions = positions.filter((p) => (p as any).type !== "bucket_sum" && !SINGLE_LEG_STRATEGIES.has((p as any).strategy)) as Position[];
   const bucketPositions = positions.filter((p) => (p as any).type === "bucket_sum") as BucketPosition[];
   const singleLegPositions = positions.filter((p) => SINGLE_LEG_STRATEGIES.has((p as any).strategy)) as SingleLegPosition[];
@@ -1573,6 +1657,29 @@ export default function Dashboard() {
                   <CardContent className="space-y-1.5">
                     {invertedLegs.map((sig) => (
                       <InvertedLegRow key={sig.id} sig={sig} />
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Digital Option Mispricing — Black-Scholes vs real-time spot price */}
+              {digitalSignals.length > 0 && (
+                <Card className="rounded-3xl shadow-sm border-blue-100 bg-blue-50/30">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-blue-700">
+                      📡 Digital Option Mispricing
+                      <Badge className="rounded-full bg-blue-100 text-blue-700 text-xs">
+                        {digitalSignals.length}
+                      </Badge>
+                    </CardTitle>
+                    <p className="text-xs text-blue-600/70">
+                      Black-Scholes model price vs Kalshi market price using real-time Binance/Yahoo spot data.
+                      Edge = |model prob − Kalshi mid|.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-1.5">
+                    {digitalSignals.map((sig) => (
+                      <DigitalSignalRow key={sig.id} sig={sig} />
                     ))}
                   </CardContent>
                 </Card>

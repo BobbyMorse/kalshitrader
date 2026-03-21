@@ -31,10 +31,12 @@ from kalshi_feed import KalshiFeed
 from models import (BucketMarket, BucketSumSignal, SingleLegSignal,
                     StructuralAnomaly, ThresholdMarket, ViolationSignal)
 from paper_trader import PaperTrader
-from scanner import (find_bucket_violations, find_ladder_mean_reversion,
+from scanner import (find_bucket_violations, find_digital_mispricing,
+                     find_ladder_mean_reversion,
                      find_ladder_sell_expensive, find_structural_anomalies,
                      find_violations, group_bucket_markets, group_integer_threshold_markets,
                      group_threshold_markets)
+from price_feed import PriceFeed
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 
@@ -149,6 +151,8 @@ _bucket_near_misses: List[BucketSumSignal] = []   # positive edge, below trade t
 _structural_anomalies: List[StructuralAnomaly] = []        # non-adjacent violations (gross_edge > 0)
 _inverted_leg_signals: List[SingleLegSignal] = []          # single-leg price inversions (buy the cheap leg)
 _sell_expensive_signals: List[SingleLegSignal] = []        # single-leg sell expensive (buy NO on stale expensive rung)
+_digital_signals: List[SingleLegSignal] = []               # Black-Scholes digital option mispricing
+_price_feed: PriceFeed = PriceFeed()                       # real-time spot prices (Binance WS + Yahoo Finance)
 _structural_near_misses: List[StructuralAnomaly] = []     # non-adjacent near-misses (closest to arb)
 _market_cache: Dict[str, dict] = {}               # ticker → raw market dict
 _threshold_map: Dict[str, ThresholdMarket] = {}      # ticker → ThresholdMarket
@@ -278,6 +282,8 @@ def _snapshot() -> dict:
         "structural_near_misses": [s.to_dict() for s in _structural_near_misses[:20]],
         "inverted_legs": [s.to_dict() for s in _inverted_leg_signals],
         "sell_expensive_legs": [s.to_dict() for s in _sell_expensive_signals],
+        "digital_signals": [s.to_dict() for s in _digital_signals],
+        "spot_prices": _price_feed.snapshot(),
         "positions": (
             [p.to_dict() for p in open_pos] +
             [p.to_dict() for p in closed_pos[-100:]] +
@@ -897,6 +903,32 @@ async def _refresh_markets() -> None:
                 print(f"[Refresh] Opened {sell_new} sell-expensive (NO) positions")
             _sell_expensive_signals[:] = [s for s in _sell_expensive_signals if not _trader.is_positioned(s.id)]
 
+        # Digital option scan: Black-Scholes mispricing vs real-time spot prices
+        spots = _price_feed.snapshot()
+        if spots:
+            vols = {a: _price_feed.vol(a) for a in spots}
+            digital = find_digital_mispricing(all_groups, spots, vols, min_edge=0.06,
+                                              fee_rate=_config["fee_rate"])
+            if digital:
+                await _enrich_single_leg_depths(digital, _config["max_size"])
+            digital = [s for s in digital if s.avail_size > 0]
+            _digital_signals.clear()
+            _digital_signals.extend(digital)
+            if digital:
+                print(f"[Refresh] {len(digital)} digital mispricing signal(s)")
+                for sig in digital[:3]:
+                    print(f"  [DIGITAL] {sig.id}: ask={sig.market.yes_ask:.2f} "
+                          f"target={sig.target_bid:.2f} edge={sig.inversion:.2f}")
+            if _config["auto_trade_inverted"] and _config["auto_trade"] and _config["paper_trading"]:
+                dig_new = 0
+                for sig in digital:
+                    if not _trader.is_positioned(sig.id):
+                        if _trader.execute_single_leg(sig):
+                            dig_new += 1
+                if dig_new:
+                    print(f"[Refresh] Opened {dig_new} digital position(s)")
+                _digital_signals[:] = [s for s in _digital_signals if not _trader.is_positioned(s.id)]
+
         best_near = f" best={near_misses[0].gross_edge:.3f}" if near_misses else ""
         print(
             f"[Refresh] {_state['markets_fetched']} markets | "
@@ -1044,6 +1076,7 @@ async def startup() -> None:
     if ok:
         print("[main] Seeding market cache…")
         _state["running"] = True
+        await _price_feed.start()
         await _refresh_markets()
         await _start_feed()
         _state["scan_task"] = asyncio.create_task(_refresh_loop())
@@ -1253,6 +1286,24 @@ async def trade_sell_expensive(ticker: str) -> dict:
         detail = (f"Only {sig.avail_size} contracts at bid (min 10)" if sig.avail_size > 0
                   else "No depth data at bid — orderbook unavailable")
         raise HTTPException(status_code=409, detail=detail)
+    try:
+        pos = _trader.execute_single_leg(sig)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Execution error: {exc}")
+    if pos is None:
+        raise HTTPException(status_code=409, detail="Already positioned or zero size")
+    await _broadcast(_snapshot())
+    return {"ok": True, "position_id": pos.id}
+
+
+@app.post("/digital/{ticker}/trade")
+async def trade_digital(ticker: str) -> dict:
+    """Manually execute a digital option mispricing trade."""
+    sig = next((s for s in _digital_signals if s.id == ticker), None)
+    if sig is None:
+        raise HTTPException(status_code=404, detail=f"Digital signal not found: {ticker!r}")
+    if _trader.is_positioned(ticker):
+        raise HTTPException(status_code=409, detail="Already positioned")
     try:
         pos = _trader.execute_single_leg(sig)
     except Exception as exc:

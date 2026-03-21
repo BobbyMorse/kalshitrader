@@ -28,6 +28,8 @@ export interface BotData {
   structuralAnomalies: StructuralAnomaly[];
   structuralNearMisses: StructuralAnomaly[];
   invertedLegs: InvertedLegSignal[];
+  sellExpensiveLegs: InvertedLegSignal[];
+  digitalSignals: InvertedLegSignal[];
   positions: (Position | BucketPosition | SingleLegPosition)[];
   trades: TradeRecord[];
   pnlHistory: PnlPoint[];
@@ -58,6 +60,8 @@ export function useWebSocket(): BotData & BotControls {
   const [structuralAnomalies, setStructuralAnomalies] = useState<StructuralAnomaly[]>([]);
   const [structuralNearMisses, setStructuralNearMisses] = useState<StructuralAnomaly[]>([]);
   const [invertedLegs, setInvertedLegs] = useState<InvertedLegSignal[]>([]);
+  const [sellExpensiveLegs, setSellExpensiveLegs] = useState<InvertedLegSignal[]>([]);
+  const [digitalSignals, setDigitalSignals] = useState<InvertedLegSignal[]>([]);
   const [positions, setPositions] = useState<(Position | BucketPosition | SingleLegPosition)[]>([]);
   const [trades, setTrades] = useState<TradeRecord[]>([]);
   const [pnlHistory, setPnlHistory] = useState<PnlPoint[]>([]);
@@ -93,6 +97,8 @@ export function useWebSocket(): BotData & BotControls {
         if (msg.structural_anomalies) setStructuralAnomalies(msg.structural_anomalies);
         if (msg.structural_near_misses) setStructuralNearMisses(msg.structural_near_misses);
         if (msg.inverted_legs) setInvertedLegs(msg.inverted_legs);
+        if (msg.sell_expensive_legs) setSellExpensiveLegs(msg.sell_expensive_legs);
+        if (msg.digital_signals) setDigitalSignals(msg.digital_signals);
         if (msg.positions) setPositions(msg.positions);
         if (msg.trades) setTrades(msg.trades);
         if (msg.pnl_history) setPnlHistory(msg.pnl_history);
@@ -144,6 +150,8 @@ export function useWebSocket(): BotData & BotControls {
     structuralAnomalies,
     structuralNearMisses,
     invertedLegs,
+    sellExpensiveLegs,
+    digitalSignals,
     positions,
     trades,
     pnlHistory,
