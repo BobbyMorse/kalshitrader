@@ -1237,6 +1237,23 @@ def find_weather_mispricing(
     print(f"[Weather] no_series={n_no_series} no_data={n_no_data} "
           f"tail={n_tail} edge_fail={n_edge} fee_fail={n_fee} "
           f"→ YES={n_yes} NO={n_no}")
+    if n_yes == 0 and n_no == 0 and (n_edge + n_fee) > 0:
+        # Re-iterate to show per-rung debug — only fires when candidates exist but no signals
+        for event_ticker, markets in groups.items():
+            series = event_ticker.split("-")[0].upper()
+            if series not in _WEATHER_SERIES_METRIC:
+                continue
+            mtd = weather_prices.get(f"WXMTD:{series}", 0.0)
+            fwd = weather_prices.get(f"WXFWD:{series}", 0.0)
+            for market in sorted(markets, key=lambda m: m.threshold):
+                if market.yes_ask <= 0 or market.threshold <= 0:
+                    continue
+                prob = _weather_prob(mtd, fwd, market.threshold)
+                ye = round(prob - market.yes_ask, 3)
+                ne = round(market.yes_bid - prob, 3)
+                print(f"  [WxDbg] {market.ticker:50s} mtd={mtd:.2f}\" T={market.threshold:.1f}\" "
+                      f"prob={prob:.2f} ask={market.yes_ask:.2f} bid={market.yes_bid:.2f} "
+                      f"y_edge={ye:+.3f} n_edge={ne:+.3f}")
 
     signals.sort(key=lambda s: s.inversion, reverse=True)
     return signals[:top_n]
