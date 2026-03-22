@@ -331,6 +331,19 @@ class KalshiClient:
         "KXIMMIGRATION",     # Immigration policy
         "KXHEALTHCARE",      # Healthcare
         "KXCLIMATE",         # Climate policy
+        # ── Weather (monthly rain/snow ladders) ──────────────────────────────
+        "KXRAINNYCM",   # Monthly rain NYC
+        "KXRAINLAXM",   # Monthly rain LA
+        "KXRAINDENM",   # Monthly rain Denver
+        "KXRAINSFOM",   # Monthly rain SF
+        "KXRAINMIA",    # Monthly rain Miami
+        "KXRAINNO",     # Monthly rain New Orleans
+        "KXDETSNOWM",   # Monthly snow Detroit
+        "KXDENSNOWMB",  # Monthly snow Denver (B variant)
+        "KXDCSNOWM",    # Monthly snow DC
+        "KXHOUSNOWM",   # Monthly snow Houston
+        "KXDENSNOWM",   # Monthly snow Denver
+        "KXSNOWNYM",    # Monthly snow NYC
     ]
 
     async def get_markets(self, status: str = "open") -> List[Dict]:
