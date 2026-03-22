@@ -34,7 +34,8 @@ from paper_trader import PaperTrader
 from scanner import (find_bucket_violations, find_digital_mispricing,
                      find_ladder_mean_reversion,
                      find_ladder_sell_expensive, find_structural_anomalies,
-                     find_violations, group_bucket_markets, group_integer_threshold_markets,
+                     find_violations, find_weather_mispricing,
+                     group_bucket_markets, group_integer_threshold_markets,
                      group_threshold_markets)
 from price_feed import PriceFeed
 
@@ -152,6 +153,7 @@ _structural_anomalies: List[StructuralAnomaly] = []        # non-adjacent violat
 _inverted_leg_signals: List[SingleLegSignal] = []          # single-leg price inversions (buy the cheap leg)
 _sell_expensive_signals: List[SingleLegSignal] = []        # single-leg sell expensive (buy NO on stale expensive rung)
 _digital_signals: List[SingleLegSignal] = []               # Black-Scholes digital option mispricing
+_weather_signals: List[SingleLegSignal] = []               # NOAA weather vs Kalshi market mispricing
 _price_feed: PriceFeed = PriceFeed()                       # real-time spot prices (Binance WS + Yahoo Finance)
 _structural_near_misses: List[StructuralAnomaly] = []     # non-adjacent near-misses (closest to arb)
 _market_cache: Dict[str, dict] = {}               # ticker → raw market dict
@@ -285,6 +287,7 @@ def _snapshot() -> dict:
         "inverted_legs": [s.to_dict() for s in _inverted_leg_signals],
         "sell_expensive_legs": [s.to_dict() for s in _sell_expensive_signals],
         "digital_signals": [s.to_dict() for s in _digital_signals],
+        "weather_signals": [s.to_dict() for s in _weather_signals],
         "spot_prices": _price_feed.snapshot(),
         "positions": (
             [p.to_dict() for p in open_pos] +
@@ -931,6 +934,52 @@ async def _refresh_markets() -> None:
                 if digital_new:
                     print(f"[Refresh] Opened {digital_new} digital position(s)")
             _digital_signals[:] = [s for s in _digital_signals if not _trader.is_positioned(s.id)]
+
+        # Weather scanner: NOAA actual vs Kalshi market price
+        # Uses combined threshold groups (both float-suffix snow + integer-suffix rain markets)
+        wx_prices = _price_feed.snapshot()
+        wx_groups = {et: ms for et, ms in {**groups, **int_groups}.items()
+                     if et.split("-")[0].upper() in (
+                         "KXRAINNYCM", "KXRAINLAXM", "KXRAINDENM", "KXRAINSFOM",
+                         "KXRAINMIA", "KXRAINNO",
+                         "KXDETSNOWM", "KXDENSNOWMB", "KXDCSNOWM", "KXHOUSNOWM",
+                         "KXAUSSNOWM", "KXLAXSNOWM", "KXDENSNOWM", "KXSNOWNYM",
+                     )}
+        if wx_groups or wx_prices:
+            weather = find_weather_mispricing(
+                {**groups, **int_groups},  # pass all; scanner filters by series
+                wx_prices,
+                min_edge=0.07,
+                fee_rate=_config["fee_rate"],
+            )
+            if weather:
+                await _enrich_single_leg_depths(weather, _config["max_size"])
+            weather = [s for s in weather if s.avail_size > 0]
+            _weather_signals.clear()
+            _weather_signals.extend(weather)
+            if weather:
+                print(f"[Refresh] {len(weather)} weather mispricing signal(s)")
+                for sig in weather[:5]:
+                    mtd = wx_prices.get(f"WXMTD:{sig.series}", 0.0)
+                    fwd = wx_prices.get(f"WXFWD:{sig.series}", 0.0)
+                    print(f"  [WEATHER] {sig.id}: side={sig.side} ask={sig.market.yes_ask:.2f} "
+                          f"edge={sig.inversion:.2f} mtd={mtd:.2f}\" fwd={fwd:.2f}\"")
+            # Auto-trade weather signals: cap at 50 contracts, 1 per series
+            if _config.get("auto_trade") and _config.get("paper_trading"):
+                wx_new = 0
+                wx_series_done: set = set()
+                for sig in weather:
+                    if _trader.is_positioned(sig.id):
+                        continue
+                    if sig.series in wx_series_done:
+                        continue
+                    sig.avail_size = min(sig.avail_size, 50)
+                    if _trader.execute_single_leg(sig):
+                        wx_new += 1
+                        wx_series_done.add(sig.series)
+                if wx_new:
+                    print(f"[Refresh] Opened {wx_new} weather position(s)")
+            _weather_signals[:] = [s for s in _weather_signals if not _trader.is_positioned(s.id)]
 
         best_near = f" best={near_misses[0].gross_edge:.3f}" if near_misses else ""
         print(

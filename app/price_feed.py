@@ -77,6 +77,27 @@ _YF_SYMBOLS = ",".join(_YF_ASSETS.keys())
 _YF_POLL_INTERVAL = 30.0   # seconds between REST polls
 _YF_TIMEOUT       = 8.0    # HTTP timeout
 
+# ── Open-Meteo weather data (NOAA-sourced, no auth required) ─────────────────
+# Maps Kalshi series_ticker → (latitude, longitude, metric)
+# metric: "rain" = monthly precipitation in inches, "snow" = monthly snowfall in inches
+_WEATHER_SERIES: Dict[str, tuple] = {
+    "KXRAINNYCM":  (40.71, -74.01,   "rain"),   # NYC (JFK area)
+    "KXRAINLAXM":  (33.93, -118.40,  "rain"),   # LA (LAX area)
+    "KXRAINDENM":  (39.86, -104.67,  "rain"),   # Denver (DIA area)
+    "KXRAINSFOM":  (37.62, -122.38,  "rain"),   # SF (SFO area)
+    "KXRAINMIA":   (25.80, -80.29,   "rain"),   # Miami (MIA area)
+    "KXRAINNO":    (29.99, -90.26,   "rain"),   # New Orleans (MSY area)
+    "KXDETSNOWM":  (42.21, -83.35,   "snow"),   # Detroit (DTW area)
+    "KXDENSNOWMB": (39.86, -104.67,  "snow"),   # Denver (DIA area)
+    "KXDCSNOWM":   (38.85, -77.04,   "snow"),   # DC (DCA area)
+    "KXHOUSNOWM":  (29.98, -95.34,   "snow"),   # Houston (IAH area)
+    "KXAUSSNOWM":  (30.19, -97.67,   "snow"),   # Austin (AUS area)
+    "KXLAXSNOWM":  (33.93, -118.40,  "snow"),   # LA snow (rare)
+    "KXDENSNOWM":  (39.86, -104.67,  "snow"),   # Denver monthly snow
+    "KXSNOWNYM":   (40.71, -74.01,   "snow"),   # NYC monthly snow
+}
+_WEATHER_POLL_INTERVAL = 3600.0   # 1 hour — weather data changes slowly
+
 
 class PriceFeed:
     """
@@ -98,9 +119,11 @@ class PriceFeed:
         """Start background tasks. Call once on app startup."""
         await self._poll_yf()                              # warm up REST prices
         await self._poll_coingecko()                       # warm up crypto prices
+        await self._poll_weather()                         # warm up weather data
         self._tasks.append(asyncio.create_task(self._coinbase_ws_loop()))
         self._tasks.append(asyncio.create_task(self._yf_poll_loop()))
         self._tasks.append(asyncio.create_task(self._coingecko_poll_loop()))
+        self._tasks.append(asyncio.create_task(self._weather_poll_loop()))
         print(f"[PriceFeed] Started. Initial prices: "
               f"BTC={self._prices.get('BTC')} ETH={self._prices.get('ETH')} "
               f"SPX={self._prices.get('SPX')} WTI={self._prices.get('WTI')}")
@@ -231,3 +254,99 @@ class PriceFeed:
                 print(f"[PriceFeed] YF updated: {list(prices.keys())}")
         except Exception as exc:
             print(f"[PriceFeed] Yahoo Finance poll error: {exc}")
+
+    # ── Open-Meteo weather (NOAA-sourced monthly precipitation) ─────────────
+
+    async def _weather_poll_loop(self) -> None:
+        """Poll open-meteo once per hour for weather accumulations."""
+        while True:
+            await asyncio.sleep(_WEATHER_POLL_INTERVAL)
+            await self._poll_weather()
+
+    async def _poll_weather(self) -> None:
+        """
+        Fetch month-to-date accumulated precip/snow AND forecast for remaining days
+        from open-meteo (free, no auth, NOAA-sourced data).
+
+        Stored as:
+          WXMTD:{series}  = actual month-to-date total in inches (archive data)
+          WXFWD:{series}  = forecast inches for rest of month (NWS forecast)
+        """
+        from datetime import datetime, timezone, timedelta as _td
+        now_utc = datetime.now(timezone.utc)
+        month_start = now_utc.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        # Archive lags by ~1 day; use up to 2 days ago to be safe
+        archive_end = (now_utc - _td(days=1)).strftime("%Y-%m-%d")
+        month_start_str = month_start.strftime("%Y-%m-%d")
+        today_str = now_utc.strftime("%Y-%m-%d")
+        # End of month = first day of next month minus 1 day
+        if now_utc.month == 12:
+            next_month = now_utc.replace(year=now_utc.year + 1, month=1, day=1)
+        else:
+            next_month = now_utc.replace(month=now_utc.month + 1, day=1)
+        end_of_month_str = (next_month - _td(days=1)).strftime("%Y-%m-%d")
+
+        updated = []
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for series, (lat, lon, metric) in _WEATHER_SERIES.items():
+                try:
+                    # ── Archive: actual month-to-date ───────────────────────
+                    if archive_end >= month_start_str:
+                        r = await client.get(
+                            "https://archive-api.open-meteo.com/v1/archive",
+                            params={
+                                "latitude": lat, "longitude": lon,
+                                "start_date": month_start_str,
+                                "end_date": archive_end,
+                                "daily": "precipitation_sum,snowfall_sum",
+                                "precipitation_unit": "inch",
+                                "timezone": "UTC",
+                            },
+                        )
+                        mtd = 0.0
+                        if r.status_code == 200:
+                            daily = r.json().get("daily", {})
+                            if metric == "rain":
+                                mtd = sum(v or 0.0 for v in daily.get("precipitation_sum", []))
+                            else:
+                                # snowfall_sum is in cm; convert to inches
+                                mtd = sum((v or 0.0) * 0.3937 for v in daily.get("snowfall_sum", []))
+                        self._prices[f"WXMTD:{series}"] = round(mtd, 3)
+                        self._updated[f"WXMTD:{series}"] = time.monotonic()
+
+                    # ── Forecast: remaining days in month ───────────────────
+                    r2 = await client.get(
+                        "https://api.open-meteo.com/v1/forecast",
+                        params={
+                            "latitude": lat, "longitude": lon,
+                            "daily": "precipitation_sum,snowfall_sum",
+                            "precipitation_unit": "inch",
+                            "forecast_days": 16,
+                            "timezone": "UTC",
+                        },
+                    )
+                    fwd = 0.0
+                    if r2.status_code == 200:
+                        daily2 = r2.json().get("daily", {})
+                        dates = daily2.get("time", [])
+                        precip = daily2.get("precipitation_sum", [])
+                        snow   = daily2.get("snowfall_sum", [])
+                        for i, d in enumerate(dates):
+                            if today_str <= d <= end_of_month_str:
+                                if metric == "rain":
+                                    fwd += (precip[i] or 0.0) if i < len(precip) else 0.0
+                                else:
+                                    fwd += ((snow[i] or 0.0) * 0.3937) if i < len(snow) else 0.0
+                    self._prices[f"WXFWD:{series}"] = round(fwd, 3)
+                    self._updated[f"WXFWD:{series}"] = time.monotonic()
+
+                    mtd_v = self._prices.get(f"WXMTD:{series}", 0.0)
+                    fwd_v = self._prices.get(f"WXFWD:{series}", 0.0)
+                    updated.append(f"{series}(mtd={mtd_v:.2f}\" fwd={fwd_v:.2f}\")")
+                    await asyncio.sleep(0.3)   # be polite to open-meteo
+
+                except Exception as exc:
+                    print(f"[PriceFeed] Weather poll error {series}: {exc}")
+
+        if updated:
+            print(f"[PriceFeed] Weather: {', '.join(updated)}")

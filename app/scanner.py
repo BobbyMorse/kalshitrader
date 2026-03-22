@@ -316,6 +316,13 @@ _INT_THRESHOLD_SERIES = (
     "KXMLBSTATCOUNT",  # MLB combined stat milestone counts
     # Golf
     "KXPGASTROKEMARGIN", # PGA stroke margin (1+, 2+, 3+ strokes ahead)
+    # Weather — monthly rain markets use integer-inch thresholds (-1, -2, -3 ...)
+    "KXRAINNYCM",   # Monthly rain NYC (inches)
+    "KXRAINLAXM",   # Monthly rain LA
+    "KXRAINDENM",   # Monthly rain Denver
+    "KXRAINSFOM",   # Monthly rain SF
+    "KXRAINMIA",    # Monthly rain Miami
+    "KXRAINNO",     # Monthly rain New Orleans
 )
 
 # Series that use <TEAM><integer> suffix as threshold (e.g. NYK7 = NYK wins 1H by 7+)
@@ -1056,6 +1063,182 @@ def find_ladder_sell_expensive(
             reason_str = "  ".join(f"{k}={v}" for k, v in top_reasons)
             print(f"  {series_key:20s} {total:4d} candidates rejected  {sig_n} signals  | {reason_str}")
 
+    return signals[:top_n]
+
+
+# ── Weather mispricing scanner ────────────────────────────────────────────────
+
+# Kalshi series that use NOAA weather data as underlying.
+# Maps series_ticker → "rain" or "snow"
+_WEATHER_SERIES_METRIC: Dict[str, str] = {
+    "KXRAINNYCM":  "rain",
+    "KXRAINLAXM":  "rain",
+    "KXRAINDENM":  "rain",
+    "KXRAINSFOM":  "rain",
+    "KXRAINMIA":   "rain",
+    "KXRAINNO":    "rain",
+    "KXDETSNOWM":  "snow",
+    "KXDENSNOWMB": "snow",
+    "KXDCSNOWM":   "snow",
+    "KXHOUSNOWM":  "snow",
+    "KXAUSSNOWM":  "snow",
+    "KXLAXSNOWM":  "snow",
+    "KXDENSNOWM":  "snow",
+    "KXDCSNOWM":   "snow",
+    "SNOWNY":      "snow",
+    "KXSNOWNYM":   "snow",
+}
+
+
+def _weather_prob(mtd: float, fwd: float, threshold: float) -> float:
+    """
+    P(monthly accumulated total >= threshold) given:
+      mtd: actual month-to-date total (inches, from NOAA archive)
+      fwd: forecast remaining for rest of month (inches, from NWS/open-meteo)
+      threshold: Kalshi market threshold (inches)
+
+    Model: if already exceeded → ~0.97.
+           if impossible even with 3x forecast → ~0.03.
+           otherwise: normal CDF around (expected - threshold) / sigma
+           where sigma = max(0.15, fwd * 0.50).
+    """
+    try:
+        from scipy.stats import norm as _norm
+    except ImportError:
+        # Fallback without scipy
+        expected = mtd + fwd
+        if expected >= threshold + 0.5:
+            return 0.85
+        elif expected <= threshold - 0.5:
+            return 0.15
+        return 0.50
+
+    if mtd >= threshold:
+        return 0.97                  # already exceeded — near-certain YES
+
+    needed = threshold - mtd
+    if fwd <= 0:
+        return 0.03                  # no more precip expected — won't reach
+
+    max_possible = mtd + fwd * 3.0   # 3× forecast = extreme upper bound
+    if max_possible < threshold:
+        return 0.03                  # physically impossible
+
+    expected = mtd + fwd
+    sigma = max(0.15, fwd * 0.50)    # 50% of forecast as 1-sigma uncertainty
+    prob = float(_norm.cdf((expected - threshold) / sigma))
+    return max(0.03, min(0.97, prob))
+
+
+def find_weather_mispricing(
+    groups: Dict[str, List[ThresholdMarket]],
+    weather_prices: Dict[str, float],   # "WXMTD:SERIES" and "WXFWD:SERIES"
+    min_edge: float = 0.07,
+    fee_rate: float = 0.07,
+    top_n: int = 20,
+) -> List[SingleLegSignal]:
+    """
+    Compare each Kalshi weather-market rung to a model probability derived from
+    actual NOAA month-to-date accumulation + NWS forecast for the rest of the month.
+
+    Signal generated when |model_prob - kalshi_mid| >= min_edge AND the trade
+    passes the fee-aware net-profit gate (net gain >= 2¢).
+
+      model > yes_ask  → buy YES (market underpriced — MTD already near/above threshold)
+      model < yes_bid  → buy NO  (market overpriced — forecast clearly won't reach threshold)
+    """
+    signals: List[SingleLegSignal] = []
+    now = datetime.now(timezone.utc)
+
+    n_no_data = n_no_series = n_tail = n_edge = n_fee = n_yes = n_no = 0
+
+    for event_ticker, markets in groups.items():
+        series = event_ticker.split("-")[0].upper()
+        if series not in _WEATHER_SERIES_METRIC:
+            n_no_series += 1
+            continue
+
+        mtd = weather_prices.get(f"WXMTD:{series}")
+        fwd = weather_prices.get(f"WXFWD:{series}", 0.0)
+        if mtd is None:
+            n_no_data += 1
+            continue
+
+        sorted_markets = sorted(markets, key=lambda m: m.threshold)
+        if not sorted_markets:
+            continue
+
+        expiry = sorted_markets[0].expiry_dt
+        ttl = expiry - now
+        if ttl.total_seconds() < 900:   # skip markets expiring in < 15 min
+            continue
+
+        for market in sorted_markets:
+            if market.yes_ask <= 0 or market.yes_bid <= 0:
+                continue
+            if market.threshold <= 0:
+                continue
+
+            metric = _WEATHER_SERIES_METRIC.get(series, "rain")
+            prob = _weather_prob(mtd, fwd, market.threshold)
+
+            # YES signal: MTD already exceeded threshold — model ≈ 0.97, market ask is low.
+            # ERA5 (open-meteo) UNDERESTIMATES precip/snow → if ERA5 shows mtd >= threshold,
+            # actual NWS measurement almost certainly does too.  Safe to generate.
+            if prob - market.yes_ask >= min_edge and mtd >= market.threshold:
+                target = round(min(prob - 0.03, 0.95), 4)
+                _gross = target - market.yes_ask
+                if _gross * (1.0 - fee_rate) >= 0.02:
+                    n_yes += 1
+                    signals.append(SingleLegSignal(
+                        id=market.ticker,
+                        series=market.series,
+                        expiry_dt=market.expiry_dt,
+                        market=market,
+                        inversion=round(prob - market.mid(), 4),
+                        target_bid=target,
+                        detected_at=now,
+                        side="yes",
+                        strategy="weather",
+                    ))
+                else:
+                    n_fee += 1
+
+            # NO signal: model says clearly won't reach threshold.
+            # Only for RAIN markets — ERA5 can underestimate SNOWFALL massively,
+            # so a NO signal on a snow market could be a losing trade if actual
+            # snowfall far exceeds ERA5.  For rain, ERA5 liquid precip is reliable.
+            # Also require: mtd < threshold * 0.40 AND max_possible < threshold * 0.90
+            # (i.e. even with generous forecast multiplier, can't get close to threshold)
+            elif (market.yes_bid - prob >= min_edge
+                  and metric == "rain"
+                  and mtd < market.threshold * 0.40
+                  and (mtd + fwd * 3.0) < market.threshold * 0.90):
+                target_ask = round(max(prob + 0.03, 0.05), 4)
+                _gross = market.yes_bid - target_ask
+                if _gross * (1.0 - fee_rate) >= 0.02:
+                    n_no += 1
+                    signals.append(SingleLegSignal(
+                        id=market.ticker,
+                        series=market.series,
+                        expiry_dt=market.expiry_dt,
+                        market=market,
+                        inversion=round(market.mid() - prob, 4),
+                        target_bid=target_ask,
+                        detected_at=now,
+                        side="no",
+                        strategy="weather",
+                    ))
+                else:
+                    n_fee += 1
+            else:
+                n_edge += 1
+
+    print(f"[Weather] no_series={n_no_series} no_data={n_no_data} "
+          f"tail={n_tail} edge_fail={n_edge} fee_fail={n_fee} "
+          f"→ YES={n_yes} NO={n_no}")
+
+    signals.sort(key=lambda s: s.inversion, reverse=True)
     return signals[:top_n]
 
 
